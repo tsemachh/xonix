@@ -524,7 +524,7 @@ function maybeSpawnPickup(){
   for(let tries=0;tries<40;tries++){
     const x = 2+(Math.random()*(COLS-4))|0, y = 2+(Math.random()*(ROWS-4))|0;
     // in Qix mode pickups must sit on a reachable border cell
-    const reachable = grid[idx(x,y)]===LAND && (MODE!=='qix' || isFrontier(x,y));
+    const reachable = grid[idx(x,y)]===LAND && (MODE!=='qix' || walkable(x,y));
     if(reachable && (Math.abs(x-player.x)+Math.abs(y-player.y))>6){
       const types = ['shield','slow','freeze','bomb','life','speed'];
       const t = types[(Math.random()*types.length)|0];
@@ -630,8 +630,10 @@ function movePlayer(dt){
     if(s===TRAIL){ // ran into own trail
       p.x=nx; p.y=ny; loseLife('self'); return;
     }
-    // Qix mode: may only travel the outer frame + edges of claimed land (not through filled interior)
-    if(s===LAND && MODE==='qix' && !p.drawing && !isFrontier(nx,ny)){ p.dir={x:0,y:0}; break; }
+    // Qix mode: may only travel the outer frame + edges of claimed land (not through filled interior).
+    // Exception: if a capture filled in around the player (stranded on a now-interior cell), let it
+    // move freely back to a border rather than getting trapped.
+    if(s===LAND && MODE==='qix' && !p.drawing && !walkable(nx,ny) && walkable(p.x,p.y)){ p.dir={x:0,y:0}; break; }
     p.x=nx; p.y=ny;
     if(s===EMPTY){
       grid[idx(nx,ny)] = TRAIL; trail.push(idx(nx,ny)); p.drawing=true; p.onLand=false;
@@ -705,6 +707,13 @@ function isFrontier(x,y){
        ||(inB(x,y-1)&&grid[idx(x,y-1)]===EMPTY)||(inB(x,y+1)&&grid[idx(x,y+1)]===EMPTY)
        ||(inB(x-1,y)&&grid[idx(x-1,y)]===TRAIL)||(inB(x+1,y)&&grid[idx(x+1,y)]===TRAIL)
        ||(inB(x,y-1)&&grid[idx(x,y-1)]===TRAIL)||(inB(x,y+1)&&grid[idx(x,y+1)]===TRAIL);
+}
+// Qix-mode "you may only travel the lines": the outer frame is always walkable,
+// plus any claimed cell on the edge of unclaimed territory. Deep filled interior is not.
+function walkable(x,y){
+  if(!inB(x,y) || grid[idx(x,y)]!==LAND) return false;
+  if(x===0 || y===0 || x===COLS-1 || y===ROWS-1) return true;   // outer perimeter — always
+  return isFrontier(x,y);
 }
 function nearestFrontier(x,y){
   // BFS outward to find a frontier land cell (used when a sparx is engulfed)
