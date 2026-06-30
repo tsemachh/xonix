@@ -546,6 +546,11 @@ function closeTrail(){
   }
   updateHUD();
 
+  // keep the Qix invariant: never leave the player stranded inside filled land
+  if(MODE==='qix' && grid[idx(player.x,player.y)]===LAND && !walkable(player.x,player.y)){
+    const sc = nearestSafeCell(player.x,player.y); player.x=sc.x; player.y=sc.y;
+  }
+
   // 4) win conditions
   const pct = claimedCount/interiorTotal;
   if(boss){ if(boss.hp<=0 || pct>=target) return levelComplete(); }
@@ -657,6 +662,11 @@ function update(dt){
 
 function movePlayer(dt){
   const p = player;
+  // Qix invariant: when not drawing you must always be on an edge. If a prior capture
+  // left you on a now-interior cell, snap to the closest edge before moving.
+  if(MODE==='qix' && !p.drawing && grid[idx(p.x,p.y)]===LAND && !walkable(p.x,p.y)){
+    const sc = nearestSafeCell(p.x,p.y); p.x=sc.x; p.y=sc.y;
+  }
   // apply queued direction (prevents instant reversal onto trail)
   if(p.queued){
     const q = p.queued;
@@ -677,10 +687,8 @@ function movePlayer(dt){
     if(s===TRAIL){ // ran into own trail
       p.x=nx; p.y=ny; loseLife('self'); return;
     }
-    // Qix mode: may only travel the outer frame + edges of claimed land (not through filled interior).
-    // Exception: if a capture filled in around the player (stranded on a now-interior cell), let it
-    // move freely back to a border rather than getting trapped.
-    if(s===LAND && MODE==='qix' && !p.drawing && !walkable(nx,ny) && walkable(p.x,p.y)){ p.dir={x:0,y:0}; break; }
+    // Qix mode: may ONLY travel the outer frame + edges of claimed land — never filled interior.
+    if(s===LAND && MODE==='qix' && !p.drawing && !walkable(nx,ny)){ p.dir={x:0,y:0}; break; }
     p.x=nx; p.y=ny;
     if(s===EMPTY){
       grid[idx(nx,ny)] = TRAIL; trail.push(idx(nx,ny)); p.drawing=true; p.onLand=false;
@@ -1019,6 +1027,9 @@ canvas.addEventListener('mousedown',e=>{ md=true; sx=e.clientX; sy=e.clientY; re
 addEventListener('mousemove',e=>{ if(!md||state!=='playing')return; const dx=e.clientX-sx,dy=e.clientY-sy;
   if(Math.abs(dx)<20&&Math.abs(dy)<20)return; if(Math.abs(dx)>Math.abs(dy))setDir(dx>0?'right':'left'); else setDir(dy>0?'down':'up'); sx=e.clientX; sy=e.clientY; });
 addEventListener('mouseup',()=>md=false);
+// auto-pause when the tab/app loses focus, so the match isn't lost — resume from the Pause screen
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden && state==='playing' && !MP.active) togglePause(); });
+addEventListener('blur', ()=>{ if(state==='playing' && !MP.active) togglePause(); });
 
 function resumeAudio(){ const a=audio(); if(a&&a.state==='suspended') a.resume(); }
 
