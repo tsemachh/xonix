@@ -85,6 +85,14 @@
   .fact{font-size:13px;color:#a8b6e0;max-width:360px;min-height:54px;line-height:1.45;
     border-left:3px solid var(--mag);padding-left:12px;text-align:left;}
   .fact b{color:var(--yellow);}
+  /* scrolling "did you know" facts ticker along the bottom of the title (like River Raid) */
+  #ticker{position:absolute;left:0;right:0;bottom:0;height:34px;overflow:hidden;
+    background:rgba(4,8,20,.72);border-top:1px solid var(--line);display:flex;align-items:center;}
+  #ticker .track{display:inline-block;white-space:nowrap;will-change:transform;
+    animation:ticker 80s linear infinite;font-size:clamp(12px,3.2vw,15px);font-weight:bold;color:#aebbe4;}
+  #ticker:hover .track{animation-play-state:paused;}
+  #ticker b{color:var(--yellow);} #ticker i{color:var(--cyan);font-style:normal;}
+  @keyframes ticker{ from{transform:translateX(0);} to{transform:translateX(-50%);} }
   h2.screen{font-size:30px;margin:0;letter-spacing:2px;}
   .stat{font-size:16px;color:var(--ink);} .stat b{color:var(--cyan);font-size:22px;}
   .row{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;}
@@ -133,9 +141,9 @@
     <div id="screen-title" class="overlay">
       <div class="logo">XONIX</div>
       <div class="tagline">Claim the field. Dodge the Qix. Beat the bosses. The classic territory-capture arcade game, rebuilt for your phone.</div>
-      <div class="fact" id="titleFact">…</div>
       <div class="menu">
         <button class="big" id="startBtn">▶ PLAY</button>
+        <button class="ghost" id="onlineBtn">🌐 Online 2-player race</button>
         <button class="ghost" id="modeBtn">Movement: …</button>
         <button class="ghost" id="howBtn">How to play</button>
         <button class="ghost" id="lbBtn">🏆 Leaderboard</button>
@@ -147,6 +155,7 @@
         <a href="https://tsemachh.github.io/river-raid/" target="_blank" rel="noopener">River Raid</a> ·
         <a href="https://tsemachh.github.io/arcade-tag/" target="_blank" rel="noopener">Arcade Tag (תופסת)</a>
       </div>
+      <div id="ticker"><div class="track" id="tickerTrack"></div></div>
     </div>
 
     <!-- HOW TO PLAY -->
@@ -181,6 +190,26 @@
       <h2 class="screen">🏆 LEADERBOARD</h2>
       <div id="lbBody" class="small">Loading…</div>
       <button class="ghost" id="lbBack">Back</button>
+    </div>
+
+    <!-- ONLINE LOBBY -->
+    <div id="screen-lobby" class="overlay hidden">
+      <h2 class="screen">ONLINE RACE</h2>
+      <div class="tagline">Race a friend to claim the most territory in 90 seconds — first to 50% wins. One hosts, the other joins with the room code.</div>
+      <div class="menu">
+        <button class="big" id="hostBtn">Host a game</button>
+        <div id="hostInfo" class="hidden">
+          <div class="small">Share this room code with your friend:</div>
+          <div id="roomCode" style="font-size:36px;font-weight:900;letter-spacing:6px;color:var(--cyan)"></div>
+        </div>
+        <div class="small" style="opacity:.7">— or —</div>
+        <div class="row">
+          <input class="name" id="joinCode" maxlength="5" placeholder="CODE" style="width:150px" />
+          <button class="ghost" id="joinBtn">Join</button>
+        </div>
+        <div id="lobbyStatus" class="small"></div>
+      </div>
+      <button class="ghost" id="lobbyBack">Back</button>
     </div>
 
     <!-- PAUSE -->
@@ -233,6 +262,9 @@
   </div>
 </div>
 
+<!-- PeerJS (free public WebRTC broker, no API key) for online 2-player Territory Race.
+     Optional: if it fails to load, single-player still works. -->
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 "use strict";
 //=================================================================================
@@ -386,6 +418,7 @@ let boss=null;
 let MODE = LS.mode;   // 'qix' = move on borders/edges only, 'xonix' = free-roam on claimed land
 let trail=[];
 let readyTimer=0, shake=0, levelStartTime=0;
+let fuse={active:false, pos:0, idle:0};   // Qix "fuse": a spark that burns down your line if you stop drawing
 let pus={shield:0, slow:0, freeze:0, speed:0};  // remaining seconds
 let picColors = new Array(COLS*ROWS);
 
@@ -449,6 +482,7 @@ function startLevel(){
   pus = {shield:0, slow:0, freeze:0, speed:0};
   combo = 1; comboTimer = 0;
   readyTimer = 1.2; shake = 0;
+  fuse = {active:false, pos:0, idle:0};
   levelStartTime = performance.now();
   updateHUD();
 }
@@ -475,6 +509,7 @@ function closeTrail(){
   const trailLen = trail.length;
   trail = [];
   player.drawing = false;
+  fuse.active=false; fuse.pos=0; fuse.idle=0;
 
   // 2) flood from every enemy sitting in EMPTY water; unreached EMPTY gets filled
   const seen = new Uint8Array(COLS*ROWS);
@@ -539,12 +574,15 @@ function loseLife(reason){
   if(pus.shield>0) return; // shielded — ignore
   lives--; SFX.death(); vibrate([40,40,40]); shake = 16;
   burst((player.x+0.5)*CELL,(player.y+0.5)*CELL,'#f43f5e',26);
-  // erase current trail
+  // remember where we died, then erase the unfinished trail
+  const dx=player.x, dy=player.y;
   for(const i of trail) grid[i]=EMPTY;
   trail = []; combo = 1;
+  fuse.active=false; fuse.pos=0; fuse.idle=0;
   if(lives<=0){ return gameOver(); }
-  // respawn on a safe border cell
-  player.x=(COLS/2)|0; player.y=0; player.dir={x:0,y:0}; player.queued=null;
+  // respawn on the closest edge to where we crashed (Qix-authentic)
+  const safe = nearestSafeCell(dx,dy);
+  player.x=safe.x; player.y=safe.y; player.dir={x:0,y:0}; player.queued=null;
   player.drawing=false; player.onLand=true; player.stepAcc=0;
   pus.shield = 1.5; readyTimer = 1.0;
   updateHUD();
@@ -561,7 +599,7 @@ function levelComplete(){
   document.getElementById('clearTitle').textContent = (level%5===0)?'BOSS DOWN!':'LEVEL '+level+' CLEAR';
   document.getElementById('clearStats').innerHTML =
     `Claimed <b>${Math.round(claimedCount/interiorTotal*100)}%</b> · `+
-    `Time bonus <b>${timeBonus}</b> · Lives <b>${lifeBonus}</b><br>Score <b>${score.toLocaleString()}</b>`;
+    `Time bonus <b>${timeBonus}</b> · Life bonus <b>${lifeBonus}</b><br>Score <b>${score.toLocaleString()}</b>`;
   document.getElementById('clearFact').innerHTML = FACTS[(level) % FACTS.length];
   show('screen-clear');
   updateHUD();
@@ -585,6 +623,7 @@ function gameOver(){
 //=================================================================================
 function update(dt){
   if(state!=='playing') return;
+  if(MP.active){ mpUpdate(dt); return; }
   if(shake>0) shake = Math.max(0, shake-dt*40);
   // timers
   for(const k in pus){ if(pus[k]>0) pus[k]=Math.max(0,pus[k]-dt); }
@@ -597,7 +636,15 @@ function update(dt){
 
   if(readyTimer>0){ readyTimer-=dt; return; }
 
+  const tlBefore = trail.length;
   movePlayer(dt);
+  if(state!=='playing') return;
+  // Qix fuse: stop too long mid-draw and a spark races down your line toward you
+  if(player.drawing && trail.length){
+    if(trail.length > tlBefore){ fuse.active=false; fuse.pos=0; fuse.idle=0; }   // still drawing → safe
+    else { fuse.idle += dt; if(fuse.idle > 0.45) fuse.active = true; }
+    if(fuse.active){ fuse.pos += dt*18; if(fuse.pos >= trail.length){ loseLife('fuse'); return; } }
+  } else { fuse.active=false; fuse.pos=0; fuse.idle=0; }
   const enemyDt = pus.slow>0 ? dt*0.5 : dt;
   if(pus.freeze<=0){
     moveBalls(enemyDt);
@@ -715,6 +762,18 @@ function walkable(x,y){
   if(x===0 || y===0 || x===COLS-1 || y===ROWS-1) return true;   // outer perimeter — always
   return isFrontier(x,y);
 }
+// Nearest cell the player is allowed to stand on (an edge in Qix mode, any land in free-roam).
+// Used to drop the player back onto the closest edge after a crash.
+function nearestSafeCell(x,y){
+  const ok = (cx,cy)=> inB(cx,cy) && grid[idx(cx,cy)]===LAND && (MODE!=='qix' || walkable(cx,cy));
+  const sx = Math.max(0,Math.min(COLS-1,x|0)), sy = Math.max(0,Math.min(ROWS-1,y|0));
+  if(ok(sx,sy)) return {x:sx,y:sy};
+  const seen = new Uint8Array(COLS*ROWS); const q=[[sx,sy]]; seen[idx(sx,sy)]=1;
+  while(q.length){ const [cx,cy]=q.shift();
+    if(ok(cx,cy)) return {x:cx,y:cy};
+    for(const [nx,ny] of [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]]) if(inB(nx,ny)&&!seen[idx(nx,ny)]){ seen[idx(nx,ny)]=1; q.push([nx,ny]); } }
+  return {x:(COLS/2)|0, y:0};
+}
 function nearestFrontier(x,y){
   // BFS outward to find a frontier land cell (used when a sparx is engulfed)
   const seen=new Uint8Array(COLS*ROWS); const q=[idx(x,y)]; seen[idx(x,y)]=1;
@@ -767,6 +826,7 @@ function checkEnemyCollisions(){
 // RENDER
 //=================================================================================
 function draw(){
+  if(MP.active){ mpDraw(); return; }
   ctx.save();
   if(shake>0){ ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake); }
   // cells
@@ -783,6 +843,14 @@ function draw(){
   if(trail.length){
     ctx.fillStyle='rgba(34,211,238,.35)';
     for(const i of trail){ const x=i%COLS,y=(i/COLS)|0; ctx.fillRect(x*CELL-1,y*CELL-1,CELL+2,CELL+2); }
+  }
+  // fuse spark (✕) burning down the unfinished line
+  if(fuse.active && trail.length){
+    const fi = trail[Math.min(trail.length-1, Math.floor(fuse.pos))];
+    const fx=(fi%COLS+0.5)*CELL, fy=((fi/COLS|0)+0.5)*CELL, r=CELL*0.55;
+    ctx.strokeStyle='#ff5a2c'; ctx.lineWidth=2.5; ctx.shadowColor='#ff7a2c'; ctx.shadowBlur=12;
+    ctx.beginPath(); ctx.moveTo(fx-r,fy-r); ctx.lineTo(fx+r,fy+r); ctx.moveTo(fx+r,fy-r); ctx.lineTo(fx-r,fy+r); ctx.stroke();
+    ctx.shadowBlur=0;
   }
   // pickups
   for(const pu of pickups){
@@ -869,7 +937,7 @@ function updateHUD(){
   if(boss){ document.getElementById('barlabel').textContent = 'BOSS '+Math.round(boss.hp/boss.maxhp*100)+'% · '+pct+'%'; }
 }
 
-const screens=['screen-title','screen-how','screen-facts','screen-lb','screen-pause','screen-clear','screen-over'];
+const screens=['screen-title','screen-how','screen-facts','screen-lb','screen-lobby','screen-pause','screen-clear','screen-over'];
 function hideAllScreens(){ screens.forEach(s=>document.getElementById(s).classList.add('hidden')); }
 function show(id){ hideAllScreens(); document.getElementById(id).classList.remove('hidden'); }
 
@@ -913,6 +981,7 @@ async function loadBoardInto(elId, mineScore){
 function setDir(name){
   if(state!=='playing') return;
   const d = DIRS[name]; if(!d) return;
+  if(MP.active){ mpSetDir(d); return; }
   // queue it; movePlayer applies it (and blocks suicidal reversals)
   player.queued = {x:d.x,y:d.y};
 }
@@ -957,6 +1026,7 @@ function resumeAudio(){ const a=audio(); if(a&&a.state==='suspended') a.resume()
 // BUTTONS / FLOW
 //=================================================================================
 function togglePause(){
+  if(MP.active) return;   // no pausing an online/2P match
   if(state==='playing'){ state='paused'; MUSIC.stop(); show('screen-pause'); }
   else if(state==='paused'){ state='playing'; hideAllScreens(); MUSIC.setLevel(level); MUSIC.start(); }
 }
@@ -967,6 +1037,17 @@ onTap('retryBtn', ()=>newGame());
 onTap('howBtn', ()=>show('screen-how'));
 onTap('howBack', ()=>show('screen-title'));
 onTap('modeBtn', ()=>{ MODE = (MODE==='qix' ? 'xonix' : 'qix'); LS.mode = MODE; refreshTitle(); SFX.small(); });
+onTap('onlineBtn', ()=>{
+  if(typeof window.Peer !== 'function'){ showToast('Online needs an internet connection', 1800); }
+  document.getElementById('hostInfo').classList.add('hidden');
+  document.getElementById('lobbyStatus').textContent='';
+  document.getElementById('joinCode').value='';
+  wireNetHandlers(); show('screen-lobby');
+});
+onTap('hostBtn', ()=>{ wireNetHandlers(); const code=Net.host();
+  if(code){ document.getElementById('roomCode').textContent=code; document.getElementById('hostInfo').classList.remove('hidden'); } });
+onTap('joinBtn', ()=>{ wireNetHandlers(); Net.join(document.getElementById('joinCode').value); });
+onTap('lobbyBack', ()=>{ Net.close(); show('screen-title'); });
 onTap('factsBtn', ()=>{ renderFacts(); show('screen-facts'); });
 onTap('factsBack', ()=>show('screen-title'));
 onTap('lbBtn', ()=>{ show('screen-lb'); loadBoardInto('lbBody', null); });
@@ -975,7 +1056,7 @@ onTap('pauseBtn', ()=>togglePause());
 onTap('resumeBtn', ()=>togglePause());
 onTap('restartBtn', ()=>newGame());
 onTap('pauseQuit', ()=>toMenu());
-onTap('quitBtn', ()=>{ if(state==='playing'||state==='paused') toMenu(); });
+onTap('quitBtn', ()=>{ if(MP.active){ mpExit(); return; } if(state==='playing'||state==='paused') toMenu(); });
 onTap('overMenu', ()=>toMenu());
 onTap('nextBtn', ()=>{ level++; startLevel(); state='playing'; hideAllScreens(); MUSIC.setLevel(level); MUSIC.start(); });
 onTap('submitBtn', async ()=>{
@@ -993,7 +1074,10 @@ document.getElementById('soundBtn').addEventListener('click', ()=>{
   else { resumeAudio(); SFX.small(); if(state==='playing'){ MUSIC.setLevel(level); MUSIC.start(); } }
 });
 
-function toMenu(){ state='title'; MUSIC.stop(); show('screen-title'); refreshTitle(); }
+function toMenu(){ state='title'; MP.active=false; MUSIC.stop();
+  const lv=document.getElementById('lives'); if(lv) lv.style.color='';
+  const ll=document.getElementById('lvl'); if(ll) ll.style.color='';
+  show('screen-title'); refreshTitle(); }
 
 function refreshTitle(){
   best=LS.best;
@@ -1006,11 +1090,276 @@ function renderFacts(){
     FACTS.map(f=>`<div class="fact">${f}</div>`).join('');
 }
 
-// rotating title fact
-let factIx=0;
-function rotateFact(){ const el=document.getElementById('titleFact'); if(!el) return;
-  el.innerHTML = FACTS[factIx % FACTS.length]; factIx++; }
-setInterval(()=>{ if(state==='title') rotateFact(); }, 5000);
+// scrolling "did you know" facts ticker on the title (continuous marquee, like River Raid)
+function buildTicker(){ const t=document.getElementById('tickerTrack'); if(!t) return;
+  const line = '★ DID YOU KNOW — ' + FACTS.join('&nbsp;&nbsp;&nbsp;◆&nbsp;&nbsp;&nbsp;') + '&nbsp;&nbsp;&nbsp;◆&nbsp;&nbsp;&nbsp;';
+  t.innerHTML = line + line;   // duplicated so the -50% loop is seamless
+}
+
+//=================================================================================
+// MULTIPLAYER — Territory Race (online via PeerJS, host-authoritative; + local 2P)
+//=================================================================================
+const TRAIL2 = 3;
+let owner = new Uint8Array(COLS*ROWS);   // 0 none, 1 P1, 2 P2 (meaningful where grid===LAND)
+const MP_TARGET = 0.5, MP_DUR = 90;      // win at 50% claimed, else higher % at 90s
+
+const MP = {
+  active:false, role:null,   // 'host' | 'guest' | 'local'
+  players:[], balls:[], timer:0, ready:0, over:false, winner:0,
+  myIndex:0, sendAcc:0, fullAcc:0, lastDirKey:'',
+};
+
+// ---- thin PeerJS wrapper (adapted from arcade-tag/net.js) ----
+const NET_PREFIX = 'xonixrace-';
+const NET_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function netCode(n){ let s=''; for(let i=0;i<(n||5);i++) s+=NET_ALPHABET[(Math.random()*NET_ALPHABET.length)|0]; return s; }
+const Net = {
+  peer:null, conn:null, role:null, code:null, status:'idle',
+  onData:null, onConnected:null, onClosed:null, onStatus:null,
+  _avail(){ return typeof window!=='undefined' && typeof window.Peer==='function'; },
+  _set(s,err){ this.status=s; if(this.onStatus) this.onStatus(s,err||null); },
+  host(){
+    if(!this._avail()){ this._set('error','PeerJS not loaded'); return null; }
+    this.close(); this._intentional=false; this.role='host'; this.code=netCode(5); this._set('hosting');
+    try{ this.peer=new window.Peer(NET_PREFIX+this.code,{debug:1}); }catch(e){ this._set('error',String(e)); return null; }
+    this.peer.on('open',()=>this._set('waiting'));
+    this.peer.on('connection',(conn)=>{ if(this.conn&&this.conn.open){ try{conn.close();}catch(e){} return; } this.conn=conn; this._wire(conn); });
+    this.peer.on('error',(e)=>this._err(e));
+    return this.code;
+  },
+  join(raw){
+    if(!this._avail()){ this._set('error','PeerJS not loaded'); return; }
+    const code=String(raw||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(!code){ this._set('error','empty code'); return; }
+    this.close(); this._intentional=false; this.role='guest'; this.code=code; this._set('connecting');
+    try{ this.peer=new window.Peer({debug:1}); }catch(e){ this._set('error',String(e)); return; }
+    this.peer.on('open',()=>{ const conn=this.peer.connect(NET_PREFIX+code,{reliable:true}); this.conn=conn; this._wire(conn); });
+    this.peer.on('error',(e)=>this._err(e));
+  },
+  _wire(conn){
+    conn.on('open',()=>{ this._set('connected'); if(this.onConnected) this.onConnected(); });
+    conn.on('data',(d)=>{ if(this.onData) this.onData(d); });
+    conn.on('close',()=>{ this.conn=null; this._set('closed'); if(this.onClosed) this.onClosed(); });
+    conn.on('error',(e)=>this._set('error', String(e&&e.message||e)));
+  },
+  _err(e){ const t=e&&e.type?e.type:'error'; this._set('error', t==='peer-unavailable'?'room not found':((e&&e.message)||t)); },
+  send(o){ if(this.conn&&this.conn.open){ try{ this.conn.send(o); }catch(e){} } },
+  isConnected(){ return !!(this.conn&&this.conn.open); },
+  close(){ this._intentional=true; try{ if(this.conn) this.conn.close(); }catch(e){} try{ if(this.peer) this.peer.destroy(); }catch(e){}
+    this.conn=null; this.peer=null; if(this.status!=='idle') this._set('idle'); },
+};
+
+function mpMakePlayer(i){
+  const c = i ? {x:COLS-1,y:ROWS-1} : {x:0,y:0};
+  return { id:i, x:c.x, y:c.y, dir:{x:0,y:0}, queued:null, drawing:false, stepAcc:0,
+    trail:[], trailVal:(i?TRAIL2:TRAIL), owner:i+1, score:0, lives:3, shield:0 };
+}
+
+function mpStart(role){
+  MP.active=true; MP.role=role; MP.over=false; MP.winner=0;
+  MP.timer=0; MP.ready=2.0; MP.myIndex=(role==='guest')?1:0; MP.sendAcc=0; MP.fullAcc=0; MP.lastDirKey='';
+  resetBoard(); owner.fill(0);
+  MP.players=[ mpMakePlayer(0), mpMakePlayer(1) ];
+  // shared enemies (host/local generate; guest will receive them in snapshots)
+  MP.balls=[]; particles=[];
+  if(role!=='guest'){ for(let i=0;i<3;i++){ const sp=8+Math.random()*2;
+    MP.balls.push({ x:10+Math.random()*(COLS-20), y:10+Math.random()*(ROWS-20), vx:(Math.random()<.5?-1:1)*sp, vy:(Math.random()<.5?-1:1)*sp }); } }
+  state='playing'; hideAllScreens(); MUSIC.setLevel(4); MUSIC.start();
+}
+
+function mpExit(){
+  MP.active=false; Net.close(); MUSIC.stop();
+  balls=[]; sparx=[]; qixes=[]; pickups=[]; trail=[];
+  toMenu();
+}
+
+function mpSetDir(d){
+  if(!MP.active || MP.over) return;
+  const me = MP.players[MP.myIndex]; if(!me) return;
+  if(MP.role==='guest'){ Net.send({t:'in', dx:d.x, dy:d.y}); me.queued={x:d.x,y:d.y}; }  // optimistic
+  else { me.queued={x:d.x,y:d.y}; }
+}
+
+// pct of interior claimed by player i (0-based)
+function mpPct(i){ let n=0; const want=i+1; for(let k=0;k<owner.length;k++) if(owner[k]===want) n++; return n/interiorTotal; }
+
+function mpCaptureFor(p, others){
+  if(!p.trail.length){ p.drawing=false; return; }
+  for(const i of p.trail){ grid[i]=LAND; owner[i]=p.owner; }
+  const trailLen=p.trail.length; p.trail=[]; p.drawing=false;
+  const seen=new Uint8Array(COLS*ROWS); const stack=[];
+  const seed=(cx,cy)=>{ if(inB(cx,cy)&&grid[idx(cx,cy)]===EMPTY){ const i=idx(cx,cy); if(!seen[i]){ seen[i]=1; stack.push(i);} } };
+  for(const b of MP.balls) seed(b.x|0,b.y|0);
+  for(const o of others) seed(o.x|0,o.y|0);           // don't claim the region the opponent stands in
+  while(stack.length){ const c=stack.pop(), cx=c%COLS, cy=(c/COLS)|0;
+    for(const [nx,ny] of [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]]) if(inB(nx,ny)){ const ni=idx(nx,ny); if(grid[ni]===EMPTY&&!seen[ni]){ seen[ni]=1; stack.push(ni);} } }
+  let filled=0;
+  for(let i=0;i<grid.length;i++){ if(grid[i]===EMPTY&&!seen[i]){ grid[i]=LAND; owner[i]=p.owner; filled++; } }
+  const gained=filled+trailLen;
+  if(gained>0){ p.score+=gained; burst((p.x+0.5)*CELL,(p.y+0.5)*CELL, p.owner===1?'#22d3ee':'#fb923c', 12); SFX.capture(); if(p.id===MP.myIndex) vibrate(18); }
+}
+
+function mpMove(p, dt, others){
+  if(p.queued){ const q=p.queued; if(!(p.drawing && q.x===-p.dir.x && q.y===-p.dir.y && (p.dir.x||p.dir.y))) p.dir=q; p.queued=null; }
+  if(!p.dir.x && !p.dir.y) return;
+  p.stepAcc += dt*15; let steps=Math.floor(p.stepAcc); if(steps<=0) return; p.stepAcc-=steps;
+  while(steps-- > 0){
+    const nx=p.x+p.dir.x, ny=p.y+p.dir.y;
+    if(!inB(nx,ny)){ p.dir={x:0,y:0}; break; }
+    const s=grid[idx(nx,ny)];
+    if(s===TRAIL || s===TRAIL2){ p.x=nx; p.y=ny; mpLose(p); return; }   // any trail kills the mover
+    p.x=nx; p.y=ny;
+    if(s===EMPTY){ grid[idx(nx,ny)]=p.trailVal; p.trail.push(idx(nx,ny)); p.drawing=true; }
+    else { if(p.drawing) mpCaptureFor(p, others); }
+  }
+}
+
+function mpLose(p){
+  if(p.shield>0) return;
+  p.lives--; SFX.death(); if(p.id===MP.myIndex){ vibrate([40,40,40]); shake=14; }
+  for(const i of p.trail) grid[i]=EMPTY; p.trail=[];
+  const c = p.id ? {x:COLS-1,y:ROWS-1} : {x:0,y:0};
+  p.x=c.x; p.y=c.y; p.dir={x:0,y:0}; p.queued=null; p.drawing=false; p.stepAcc=0; p.shield=1.2;
+  if(p.lives<=0){ MP.over=true; MP.winner = (p.id===0)?2:1; }
+}
+
+function mpCheckWin(){
+  const a=mpPct(0), b=mpPct(1);
+  if(a>=MP_TARGET){ MP.over=true; MP.winner=1; }
+  else if(b>=MP_TARGET){ MP.over=true; MP.winner=2; }
+  else if(MP.timer>=MP_DUR){ MP.over=true; MP.winner = a===b?0:(a>b?1:2); }
+}
+
+function mpUpdate(dt){
+  if(shake>0) shake=Math.max(0,shake-dt*40);
+  for(const pt of particles){ pt.x+=pt.vx*dt; pt.y+=pt.vy*dt; pt.vy+=140*dt; pt.life-=dt; }
+  particles = particles.filter(p=>p.life>0);
+
+  if(MP.role==='guest'){               // guest renders host snapshots; only relays input
+    mpHUD(); return;
+  }
+  if(MP.over){ mpHUD(); maybeSendSnapshot(dt, true); return; }
+  if(MP.ready>0){ MP.ready-=dt; mpHUD(); maybeSendSnapshot(dt,false); return; }
+
+  MP.timer += dt;
+  for(const p of MP.players){ if(p.shield>0) p.shield=Math.max(0,p.shield-dt); }
+  mpMove(MP.players[0], dt, [MP.players[1]]);
+  if(!MP.over) mpMove(MP.players[1], dt, [MP.players[0]]);
+  // enemies
+  for(const b of MP.balls) reflect(b, b.x+b.vx*dt, b.y+b.vy*dt);
+  // collisions: a ball on a player's trail or marker kills that player
+  for(const b of MP.balls){ const bc=idx(b.x|0,b.y|0);
+    for(const p of MP.players){ if(grid[bc]===p.trailVal || ((b.x|0)===p.x && (b.y|0)===p.y)) mpLose(p); } }
+  if(!MP.over) mpCheckWin();
+  if(MP.over) SFX.level();
+  mpHUD();
+  maybeSendSnapshot(dt, MP.over);
+}
+
+// ---- snapshots (host -> guest) ----
+function maybeSendSnapshot(dt, force){
+  if(MP.role!=='host' || !Net.isConnected()) return;
+  MP.sendAcc+=dt; MP.fullAcc+=dt;
+  const tick = MP.sendAcc>=0.05;  // ~20 Hz
+  if(tick || force){
+    MP.sendAcc=0;
+    Net.send({ t:'tick',
+      p: MP.players.map(p=>({x:p.x,y:p.y,d:p.drawing?1:0,tv:p.trailVal,tr:p.trail,li:p.lives,sh:p.shield>0?1:0})),
+      b: MP.balls.map(b=>({x:Math.round(b.x*4)/4,y:Math.round(b.y*4)/4})),
+      tm: Math.round(MP.timer*10)/10, rd: Math.max(0,Math.round(MP.ready*10)/10), ov: MP.over?1:0, wn: MP.winner });
+  }
+  if(MP.fullAcc>=0.5 || force){   // full board (owner map) ~2 Hz
+    MP.fullAcc=0;
+    Net.send({ t:'full', o: Array.from(owner) });
+  }
+}
+// guest applies a snapshot
+function mpApplyFull(msg){ const o=msg.o; for(let i=0;i<owner.length;i++){ owner[i]=o[i]; grid[i]= o[i]>0?LAND:EMPTY; }
+  for(let x=0;x<COLS;x++){ grid[idx(x,0)]=LAND; grid[idx(x,ROWS-1)]=LAND; } for(let y=0;y<ROWS;y++){ grid[idx(0,y)]=LAND; grid[idx(COLS-1,y)]=LAND; } }
+function mpApplyTick(msg){
+  // rebuild land from owner each tick, then lay trails on top so the drawing lines render
+  for(let i=0;i<grid.length;i++) grid[i] = owner[i]>0?LAND:EMPTY;
+  for(let x=0;x<COLS;x++){ grid[idx(x,0)]=LAND; grid[idx(x,ROWS-1)]=LAND; } for(let y=0;y<ROWS;y++){ grid[idx(0,y)]=LAND; grid[idx(COLS-1,y)]=LAND; }
+  if(!MP.players.length) MP.players=[mpMakePlayer(0),mpMakePlayer(1)];
+  msg.p.forEach((pp,i)=>{ const p=MP.players[i]; p.x=pp.x; p.y=pp.y; p.drawing=!!pp.d; p.lives=pp.li; p.trail=pp.tr||[];
+    for(const ci of p.trail) grid[ci]=pp.tv; });
+  MP.balls = (msg.b||[]).map(b=>({x:b.x,y:b.y,vx:0,vy:0}));
+  MP.timer=msg.tm; MP.ready=msg.rd; MP.over=!!msg.ov; MP.winner=msg.wn;
+}
+
+function wireNetHandlers(){
+  Net.onStatus=(s,err)=>{ const el=document.getElementById('lobbyStatus'); if(el) el.textContent = netStatusText(s,err); };
+  Net.onConnected=()=>{
+    if(Net.role==='host'){ mpStart('host'); Net.send({t:'full', o:Array.from(owner)}); }
+    // guest waits for first 'full' from host before starting
+  };
+  Net.onData=(msg)=>{
+    if(!msg||!msg.t) return;
+    if(Net.role==='host'){ if(msg.t==='in'){ const g=MP.players[1]; if(g) g.queued={x:msg.dx,y:msg.dy}; } return; }
+    // guest:
+    if(msg.t==='full'){ if(!MP.active) mpStart('guest'); mpApplyFull(msg); }
+    else if(msg.t==='tick'){ if(!MP.active) mpStart('guest'); mpApplyTick(msg); }
+  };
+  Net.onClosed=()=>{ if(MP.active){ showToast('Opponent left',1500); } };
+}
+function netStatusText(s,err){
+  return ({idle:'', hosting:'Creating room…', waiting:'Waiting for a friend to join…',
+    connecting:'Connecting…', connected:'Connected!', closed:'Disconnected', error:'Error: '+(err||'')})[s] || s;
+}
+
+// ---- MP rendering ----
+function mpLandColor(o, x, y){
+  // owner-tinted claimed land with a little texture
+  const v = 30 + ((x*3+y*5)%18);
+  if(o===1) return `hsl(190 75% ${30+v*0.5|0}%)`;     // P1 cyan/teal
+  return `hsl(28 85% ${34+v*0.4|0}%)`;                // P2 orange
+}
+function mpDraw(){
+  ctx.save();
+  if(shake>0) ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){ const i=idx(x,y), s=grid[i];
+    if(s===EMPTY){ ctx.fillStyle=(x+y)&1?'#2740d8':'#2238c2'; }
+    else if(s===TRAIL){ ctx.fillStyle='#bdf3ff'; }
+    else if(s===TRAIL2){ ctx.fillStyle='#ffd9a8'; }
+    else { ctx.fillStyle = owner[i] ? mpLandColor(owner[i],x,y) : '#0b1430'; }
+    ctx.fillRect(x*CELL,y*CELL,CELL,CELL);
+  }
+  // balls
+  for(const b of MP.balls){ ctx.fillStyle='#f43f5e'; ctx.beginPath(); ctx.arc(b.x*CELL,b.y*CELL,CELL*0.7,0,7); ctx.fill(); }
+  // players
+  MP.players.forEach((p,i)=>{ const cx=(p.x+0.5)*CELL, cy=(p.y+0.5)*CELL;
+    ctx.save(); ctx.translate(cx,cy); ctx.rotate(Math.PI/4);
+    ctx.fillStyle = i? '#fb923c' : '#22d3ee'; ctx.shadowColor=ctx.fillStyle; ctx.shadowBlur=12;
+    ctx.fillRect(-CELL*0.6,-CELL*0.6,CELL*1.2,CELL*1.2); ctx.restore(); ctx.shadowBlur=0;
+    if(i===MP.myIndex){ ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.strokeRect(p.x*CELL+1,p.y*CELL+1,CELL-2,CELL-2); }
+  });
+  for(const pt of particles){ ctx.globalAlpha=Math.max(0,pt.life/pt.max); ctx.fillStyle=pt.c; ctx.fillRect(pt.x-1.5,pt.y-1.5,3,3); } ctx.globalAlpha=1;
+  // banners
+  if(MP.ready>0 && !MP.over){ ctx.fillStyle='rgba(0,0,0,.4)'; ctx.fillRect(0,H/2-26,W,52);
+    ctx.fillStyle='#facc15'; ctx.font='bold 24px Verdana'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('GET READY', W/2, H/2); }
+  if(MP.over){ ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.font='bold 30px Verdana';
+    const youWin = (MP.winner===MP.myIndex+1);
+    ctx.fillStyle = MP.winner===0?'#facc15':(youWin?'#34d399':'#f43f5e');
+    ctx.fillText(MP.winner===0?'DRAW': (youWin?'YOU WIN!':'YOU LOSE'), W/2, H/2-16);
+    ctx.fillStyle='#cfe'; ctx.font='15px Verdana';
+    ctx.fillText('P1 '+(mpPct(0)*100|0)+'%   ·   P2 '+(mpPct(1)*100|0)+'%', W/2, H/2+16);
+    ctx.fillText('tap ✕ to exit', W/2, H/2+44); }
+  ctx.restore();
+}
+function mpHUD(){
+  const a=Math.round(mpPct(0)*100), b=Math.round(mpPct(1)*100);
+  const left=document.getElementById('lives'), mid=document.getElementById('score'), right=document.getElementById('lvl');
+  if(left){ left.style.color='#22d3ee'; left.textContent='P1 '+a+'%'; }
+  if(right){ right.style.color='#fb923c'; right.textContent=b+'% P2'; }
+  if(mid){ const t=Math.max(0, Math.ceil(MP_DUR-MP.timer)); mid.textContent='⏱ '+t; }
+  const bar=document.getElementById('bar'); if(bar) bar.style.right=(100-a)+'%';
+  const lbl=document.getElementById('barlabel'); if(lbl) lbl.textContent='first to '+(MP_TARGET*100)+'%';
+  const tgt=document.getElementById('targetMark'); if(tgt) tgt.style.left=(MP_TARGET*100)+'%';
+  const cw=document.getElementById('combo'); if(cw) cw.textContent='';
+  const pw=document.getElementById('puwrap'); if(pw) pw.innerHTML='';
+}
 
 //=================================================================================
 // MAIN LOOP
@@ -1024,7 +1373,7 @@ function loop(now){
 }
 
 // init
-refreshTitle(); rotateFact();
+refreshTitle(); buildTicker();
 resetBoard(); // so the title screen has a board behind it
 player={x:(COLS/2)|0,y:0,dir:{x:0,y:0},queued:null,onLand:true,stepAcc:0,drawing:false};
 balls=[];sparx=[];qixes=[];pickups=[];particles=[];trail=[];
