@@ -680,13 +680,8 @@ function movePlayer(dt){
   if(MODE==='qix' && !p.drawing && grid[idx(p.x,p.y)]===LAND && !walkable(p.x,p.y)){
     const sc = nearestSafeCell(p.x,p.y); p.x=sc.x; p.y=sc.y;
   }
-  // apply queued direction (prevents instant reversal onto trail)
-  if(p.queued){
-    const q = p.queued;
-    const reversing = p.drawing && q.x===-p.dir.x && q.y===-p.dir.y && (p.dir.x||p.dir.y);
-    if(!reversing){ p.dir = q; }
-    p.queued = null;
-  }
+  // apply queued direction (reversing is allowed now — it retreats along your line)
+  if(p.queued){ p.dir = p.queued; p.queued = null; }
   if(!p.dir.x && !p.dir.y) return;
   const speed = pus.speed>0 ? 22 : 15;       // cells / second
   p.stepAcc += dt*speed;
@@ -697,8 +692,14 @@ function movePlayer(dt){
     const nx = p.x + p.dir.x, ny = p.y + p.dir.y;
     if(!inB(nx,ny)){ p.dir={x:0,y:0}; break; }
     const s = grid[idx(nx,ny)];
-    if(s===TRAIL){ // ran into own trail
-      p.x=nx; p.y=ny; loseLife('self'); return;
+    if(s===TRAIL){
+      // back up along your own line (Qix-authentic): erase the head cell and step back
+      if(trail.length>=2 && idx(nx,ny)===trail[trail.length-2]){
+        const head = trail.pop(); grid[head]=EMPTY;
+        p.x=nx; p.y=ny; fuse.idle=0; if(fuse.pos>trail.length) fuse.pos=trail.length;
+        continue;
+      }
+      p.x=nx; p.y=ny; loseLife('self'); return;   // crossed your line elsewhere → crash
     }
     // Qix mode: may ONLY travel the outer frame + edges of claimed land — never filled interior.
     if(s===LAND && MODE==='qix' && !p.drawing && !walkable(nx,ny)){ p.dir={x:0,y:0}; break; }
@@ -1405,6 +1406,18 @@ function loop(now){
 refreshTitle(); buildTicker();
 // desktop (no touch) → hide the d-pad, keyboard plays; gives the board the full width
 try{ if(!('ontouchstart' in window) && !(navigator.maxTouchPoints>0)) document.documentElement.classList.add('notouch'); }catch(e){}
+// scale the canvas up to fill most of the available stage (preserving aspect) — esp. on desktop
+function fitCanvas(){
+  try{
+    const s=document.getElementById('stage'); if(!s) return;
+    const availW=s.clientWidth, availH=s.clientHeight; if(!availW||!availH) return;
+    const ar=W/H; let w=availW, h=w/ar; if(h>availH){ h=availH; w=h*ar; }
+    canvas.style.width=Math.floor(w)+'px'; canvas.style.height=Math.floor(h)+'px';
+  }catch(e){}
+}
+addEventListener('resize', fitCanvas);
+addEventListener('orientationchange', ()=>setTimeout(fitCanvas,200));
+fitCanvas(); setTimeout(fitCanvas,60); setTimeout(fitCanvas,300);
 resetBoard(); // so the title screen has a board behind it
 player={x:(COLS/2)|0,y:0,dir:{x:0,y:0},queued:null,onLand:true,stepAcc:0,drawing:false};
 balls=[];sparx=[];qixes=[];pickups=[];particles=[];trail=[];
