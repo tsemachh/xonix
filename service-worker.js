@@ -1,5 +1,5 @@
 /* Xonix - offline-first app-shell cache */
-const CACHE = 'xonix-v1';
+const CACHE = 'xonix-v2';
 const ASSETS = [
   './',
   './index.html',
