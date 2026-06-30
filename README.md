@@ -18,6 +18,7 @@ Screen* and it runs full-screen and offline like a native app.
 This is a deliberate "best-of" of the territory-capture genre:
 
 - **Xonix (1984)** — the grid + breadth-first **flood-fill** capture that the engine is built on.
+  Fun fact: Xonix was written by **two IDF soldiers, Ilan Rabinovitz (Rav) & Dani Rurka, during their military service in Israel** 🇮🇱.
 - **Qix (Taito, 1981)** — the roaming **Qix** line-creature, the **Sparx** that patrol your
   borders, and a fast-draw scoring bonus for grabbing lots of area with a short trail.
 - **Volfied (Taito, 1989)** — **power-ups**, end-of-run **bosses**, and a hidden picture that

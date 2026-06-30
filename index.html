@@ -45,8 +45,8 @@
   .tbtn:active{transform:scale(.94);}
   /* ---- play area ---- */
   #stage{flex:1 1 auto;position:relative;display:flex;align-items:center;justify-content:center;min-height:0;}
-  canvas{background:#070b18;border-radius:10px;border:1px solid var(--line);
-    box-shadow:0 8px 40px rgba(0,0,0,.6), inset 0 0 60px rgba(20,40,90,.25);
+  canvas{background:#2238c2;border-radius:10px;border:2px solid #4f6bff;
+    box-shadow:0 8px 40px rgba(0,0,0,.6), 0 0 24px rgba(60,90,255,.25), inset 0 0 60px rgba(20,40,120,.3);
     max-width:100%;max-height:100%;image-rendering:auto;display:block;}
   /* ---- controls ---- */
   #controls{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;
@@ -136,11 +136,17 @@
       <div class="fact" id="titleFact">…</div>
       <div class="menu">
         <button class="big" id="startBtn">▶ PLAY</button>
+        <button class="ghost" id="modeBtn">Movement: …</button>
         <button class="ghost" id="howBtn">How to play</button>
         <button class="ghost" id="lbBtn">🏆 Leaderboard</button>
         <button class="ghost" id="factsBtn">Surprising facts</button>
       </div>
       <div class="small" id="bestLine"></div>
+      <div class="small" id="moreGames" style="margin-top:4px;opacity:.85;">
+        More games by Tsemach:
+        <a href="https://tsemachh.github.io/river-raid/" target="_blank" rel="noopener">River Raid</a> ·
+        <a href="https://tsemachh.github.io/arcade-tag/" target="_blank" rel="noopener">Arcade Tag (תופסת)</a>
+      </div>
     </div>
 
     <!-- HOW TO PLAY -->
@@ -253,7 +259,7 @@ const FACTS = [
   "A Qix arcade cabinet appears on screen in <b>The Karate Kid</b> (1984) — and in the 1983 film <i>Joysticks</i>.",
   "Taito's own \"Director of Creativity\" later called Qix <b>\"conceptually too mystifying… impossible to master.\"</b>",
   "Despite that, Qix was the <b>5th highest-grossing arcade game in Japan in 1981</b>.",
-  "<b>Xonix</b> (1984) reworked Qix's free-form lines into a blocky grid — coded by Israeli developers Ilan Rav & Dani, reportedly during army service.",
+  "<b>Xonix</b> (1984) was written by <b>two IDF soldiers — Ilan Rabinovitz (Rav) & Dani Rurka — during their military service in Israel.</b> 🇮🇱 They reworked Qix's free-form lines into the blocky grid that the whole genre runs on.",
   "Where Qix used polygon math, Xonix runs on a 2D grid and a <b>flood-fill</b> algorithm — the same trick this game uses to fill your captures.",
   "Taito's official sequel, <b>Volfied</b> (1989), swapped the marker for a spaceship and revealed a hidden picture as you claimed the screen.",
   "Volfied was designed by <b>Fukio \"MTJ\" Mitsuji</b> — the creator of Bubble Bobble and Rainbow Islands.",
@@ -271,6 +277,8 @@ const LS = {
   set best(v){ try{ localStorage.setItem('xonix_best', v); }catch(e){} },
   get muted(){ return localStorage.getItem('xonix_muted')==='1'; },
   set muted(v){ try{ localStorage.setItem('xonix_muted', v?'1':'0'); }catch(e){} },
+  get mode(){ return localStorage.getItem('xonix_mode')||'qix'; },
+  set mode(v){ try{ localStorage.setItem('xonix_mode', v); }catch(e){} },
   localBoard(){ try{ return JSON.parse(localStorage.getItem('xonix_lb')||'[]'); }catch(e){ return []; } },
   saveLocal(b){ try{ localStorage.setItem('xonix_lb', JSON.stringify(b.slice(0,25))); }catch(e){} },
 };
@@ -306,6 +314,65 @@ const SFX = {
 };
 function vibrate(ms){ try{ if(navigator.vibrate) navigator.vibrate(ms); }catch(e){} }
 
+//---------------------------------------------------------------- background music (chiptune sequencer)
+let musicGain = null;
+const midf = m => 440 * Math.pow(2, (m-69)/12);
+function mnote(freq, t, dur, type, vol){
+  const a = audio(); if(!a || !musicGain) return;
+  const o = a.createOscillator(), g = a.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t+0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  o.connect(g).connect(musicGain); o.start(t); o.stop(t+dur+0.03);
+}
+function mkick(t){ const a=audio(); if(!a||!musicGain) return; const o=a.createOscillator(), g=a.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(165,t); o.frequency.exponentialRampToValueAtTime(48,t+0.11);
+  g.gain.setValueAtTime(0.6,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.14);
+  o.connect(g).connect(musicGain); o.start(t); o.stop(t+0.16); }
+function mhat(t,vol){ const a=audio(); if(!a||!musicGain) return; const dur=0.03, n=Math.max(1,(a.sampleRate*dur)|0);
+  const b=a.createBuffer(1,n,a.sampleRate), d=b.getChannelData(0); for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+  const s=a.createBufferSource(); s.buffer=b; const hp=a.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=7000;
+  const g=a.createGain(); g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  s.connect(hp).connect(g).connect(musicGain); s.start(t); s.stop(t+dur+0.02); }
+function msnare(t){ const a=audio(); if(!a||!musicGain) return; const dur=0.13, n=Math.max(1,(a.sampleRate*dur)|0);
+  const b=a.createBuffer(1,n,a.sampleRate), d=b.getChannelData(0); for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
+  const s=a.createBufferSource(); s.buffer=b; const bp=a.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1900;
+  const g=a.createGain(); g.gain.setValueAtTime(0.34,t); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  s.connect(bp).connect(g).connect(musicGain); s.start(t); s.stop(t+dur+0.02); }
+
+const MUSIC = {
+  on:false, step:0, bar:0, nextT:0, timer:null, bpm:114,
+  roots:[45,41,48,43],   // Am - F - C - G  (bass roots, MIDI)
+  lead:[0,7,3,10,12,7,10,3, 5,3,7,12,10,7,3,5],  // pentatonic line — this is what "moves"
+  setLevel(l){ this.bpm = Math.min(158, 110 + l*5); },
+  start(){
+    if(muted) return; const a=audio(); if(!a) return;
+    if(!musicGain){ musicGain=a.createGain(); musicGain.gain.value=0.5; musicGain.connect(a.destination); }
+    if(this.on) return; this.on=true; this.step=0; this.bar=0; this.nextT=a.currentTime+0.08; this._tick();
+  },
+  stop(){ this.on=false; if(this.timer){ clearTimeout(this.timer); this.timer=null; } },
+  _tick(){
+    if(!this.on) return; const a=audio(); if(!a) return;
+    const stepDur=(60/this.bpm)/4;             // 16th notes
+    while(this.nextT < a.currentTime + 0.13){
+      this._step(this.step, this.nextT, stepDur);
+      this.nextT += stepDur; this.step++;
+      if(this.step>=16){ this.step=0; this.bar=(this.bar+1)%this.roots.length; }
+    }
+    this.timer=setTimeout(()=>this._tick(), 25);
+  },
+  _step(s,t,dur){
+    const root=this.roots[this.bar];
+    if(s%4===0) mnote(midf(root-12), t, dur*3.0, 'triangle', 0.17);     // bass on the beat
+    if(s%4===2) mnote(midf(root-5),  t, dur*1.5, 'triangle', 0.10);     // walking note
+    mnote(midf(root+12+this.lead[s]), t, dur*0.9, 'square', 0.075);     // lead arpeggio
+    if(s%2===0) mnote(midf(root+12+this.lead[(s+8)%16]), t, dur*0.8, 'square', 0.035); // harmony
+    if(s===0||s===8||s===11) mkick(t);
+    if(s===4||s===12) msnare(t);
+    mhat(t, s%2 ? 0.05 : 0.025);
+  }
+};
+
 //=================================================================================
 // GAME STATE
 //=================================================================================
@@ -316,6 +383,7 @@ let claimedCount=0, interiorTotal=(COLS-2)*(ROWS-2), target=0.75;
 let combo=1, comboTimer=0;
 let player, balls, sparx, qixes, pickups, particles;
 let boss=null;
+let MODE = LS.mode;   // 'qix' = move on borders/edges only, 'xonix' = free-roam on claimed land
 let trail=[];
 let readyTimer=0, shake=0, levelStartTime=0;
 let pus={shield:0, slow:0, freeze:0, speed:0};  // remaining seconds
@@ -396,6 +464,7 @@ function newGame(){
   state='playing';
   hideAllScreens();
   SFX.start();
+  MUSIC.setLevel(level); MUSIC.start();
 }
 
 //---------------------------------------------------------------- capture logic
@@ -454,7 +523,9 @@ function maybeSpawnPickup(){
   // find a random LAND cell away from player
   for(let tries=0;tries<40;tries++){
     const x = 2+(Math.random()*(COLS-4))|0, y = 2+(Math.random()*(ROWS-4))|0;
-    if(grid[idx(x,y)]===LAND && (Math.abs(x-player.x)+Math.abs(y-player.y))>6){
+    // in Qix mode pickups must sit on a reachable border cell
+    const reachable = grid[idx(x,y)]===LAND && (MODE!=='qix' || isFrontier(x,y));
+    if(reachable && (Math.abs(x-player.x)+Math.abs(y-player.y))>6){
       const types = ['shield','slow','freeze','bomb','life','speed'];
       const t = types[(Math.random()*types.length)|0];
       pickups.push({x,y,type:t,life:12});
@@ -480,7 +551,7 @@ function loseLife(reason){
 }
 
 function levelComplete(){
-  state='clear'; SFX.level(); vibrate([20,40,20]);
+  state='clear'; MUSIC.stop(); SFX.level(); vibrate([20,40,20]);
   const timeSec = (performance.now()-levelStartTime)/1000;
   const timeBonus = Math.max(0, Math.round((90 - timeSec)) ) * 5;
   const lifeBonus = lives*200;
@@ -497,7 +568,7 @@ function levelComplete(){
 }
 
 function gameOver(){
-  state='over'; if(score>best){ best=score; LS.best=best; }
+  state='over'; MUSIC.stop(); if(score>best){ best=score; LS.best=best; }
   document.getElementById('overScore').textContent = score.toLocaleString();
   document.getElementById('overSub').textContent = `Reached level ${level} · Best ${best.toLocaleString()}`;
   const sw = document.getElementById('submitWrap');
@@ -559,6 +630,8 @@ function movePlayer(dt){
     if(s===TRAIL){ // ran into own trail
       p.x=nx; p.y=ny; loseLife('self'); return;
     }
+    // Qix mode: may only travel the outer frame + edges of claimed land (not through filled interior)
+    if(s===LAND && MODE==='qix' && !p.drawing && !isFrontier(nx,ny)){ p.dir={x:0,y:0}; break; }
     p.x=nx; p.y=ny;
     if(s===EMPTY){
       grid[idx(nx,ny)] = TRAIL; trail.push(idx(nx,ny)); p.drawing=true; p.onLand=false;
@@ -691,7 +764,7 @@ function draw(){
   for(let y=0;y<ROWS;y++){
     for(let x=0;x<COLS;x++){
       const s = grid[idx(x,y)];
-      if(s===EMPTY){ ctx.fillStyle = (x+y)&1 ? '#0a1124' : '#0b1430'; }
+      if(s===EMPTY){ ctx.fillStyle = (x+y)&1 ? '#2740d8' : '#2238c2'; }   // classic Atari Qix blue field
       else if(s===TRAIL){ ctx.fillStyle = '#eafcff'; }
       else { ctx.fillStyle = picColors[idx(x,y)]; }
       ctx.fillRect(x*CELL, y*CELL, CELL, CELL);
@@ -875,8 +948,8 @@ function resumeAudio(){ const a=audio(); if(a&&a.state==='suspended') a.resume()
 // BUTTONS / FLOW
 //=================================================================================
 function togglePause(){
-  if(state==='playing'){ state='paused'; show('screen-pause'); }
-  else if(state==='paused'){ state='playing'; hideAllScreens(); }
+  if(state==='playing'){ state='paused'; MUSIC.stop(); show('screen-pause'); }
+  else if(state==='paused'){ state='playing'; hideAllScreens(); MUSIC.setLevel(level); MUSIC.start(); }
 }
 const onTap=(id,fn)=>{ const el=document.getElementById(id); el.addEventListener('click',()=>{ resumeAudio(); fn(); }); };
 
@@ -884,6 +957,7 @@ onTap('startBtn', ()=>newGame());
 onTap('retryBtn', ()=>newGame());
 onTap('howBtn', ()=>show('screen-how'));
 onTap('howBack', ()=>show('screen-title'));
+onTap('modeBtn', ()=>{ MODE = (MODE==='qix' ? 'xonix' : 'qix'); LS.mode = MODE; refreshTitle(); SFX.small(); });
 onTap('factsBtn', ()=>{ renderFacts(); show('screen-facts'); });
 onTap('factsBack', ()=>show('screen-title'));
 onTap('lbBtn', ()=>{ show('screen-lb'); loadBoardInto('lbBody', null); });
@@ -894,7 +968,7 @@ onTap('restartBtn', ()=>newGame());
 onTap('pauseQuit', ()=>toMenu());
 onTap('quitBtn', ()=>{ if(state==='playing'||state==='paused') toMenu(); });
 onTap('overMenu', ()=>toMenu());
-onTap('nextBtn', ()=>{ level++; startLevel(); state='playing'; hideAllScreens(); });
+onTap('nextBtn', ()=>{ level++; startLevel(); state='playing'; hideAllScreens(); MUSIC.setLevel(level); MUSIC.start(); });
 onTap('submitBtn', async ()=>{
   const btn=document.getElementById('submitBtn'); btn.disabled=true;
   const name=(document.getElementById('nameInput').value||'YOU').slice(0,12);
@@ -906,15 +980,17 @@ onTap('submitBtn', async ()=>{
 });
 document.getElementById('soundBtn').addEventListener('click', ()=>{
   muted=!muted; LS.muted=muted; document.getElementById('soundBtn').textContent = muted?'🔇':'🔊';
-  if(!muted){ resumeAudio(); SFX.small(); }
+  if(muted){ MUSIC.stop(); }
+  else { resumeAudio(); SFX.small(); if(state==='playing'){ MUSIC.setLevel(level); MUSIC.start(); } }
 });
 
-function toMenu(){ state='title'; show('screen-title'); refreshTitle(); }
+function toMenu(){ state='title'; MUSIC.stop(); show('screen-title'); refreshTitle(); }
 
 function refreshTitle(){
   best=LS.best;
   document.getElementById('bestLine').textContent = best>0 ? ('Your best: '+best.toLocaleString()) : '';
   document.getElementById('soundBtn').textContent = muted?'🔇':'🔊';
+  document.getElementById('modeBtn').textContent = 'Movement: ' + (MODE==='qix' ? 'Qix (borders only)' : 'Xonix (free-roam)');
 }
 function renderFacts(){
   document.getElementById('factsList').innerHTML =
