@@ -833,7 +833,13 @@ function movePlayer(dt){
       grid[idx(nx,ny)] = TRAIL; trail.push(idx(nx,ny)); p.drawing=true; p.onLand=false; p.drawDir={x:p.dir.x,y:p.dir.y};
       if(trail.length%4===0) SFX.small();
     } else { // LAND
-      if(p.drawing){ closeTrail(); if(state!=='playing') return; }
+      if(p.drawing){
+        closeTrail(); if(state!=='playing') return;
+        // a rectangle was just filled: STOP on the new border. The frontier (walkable
+        // white line) is recomputed live from the grid, so halting here forces the player
+        // to settle on the fresh edge instead of gliding past it or auto-drawing again.
+        p.dir={x:0,y:0}; p.queued=null; held=null; p.onLand=true; break;
+      }
       p.onLand=true;
     }
     // pickup collect
