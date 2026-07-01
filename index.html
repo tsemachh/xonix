@@ -505,7 +505,11 @@ function startLevel(){
   // Enemies match the chosen game: XONIX = bouncing sea balls; QIX = the line-creature(s).
   balls = []; qixes = [];
   if(bonusStage){
-    // no enemies — just a shower of gifts to grab against the clock
+    // CLOSING-AREAS race: slow, HARMLESS orbs act as flood seeds — wall off orb-free regions to claim
+    // them for big points before the clock runs out. They can't hurt you; only the timer ends it.
+    for(let i=0;i<3;i++){ const sp=4.2*dmul();
+      balls.push({ x:6+Math.random()*(COLS-12), y:8+Math.random()*(ROWS-16),
+        vx:(Math.random()<.5?-1:1)*sp, vy:(Math.random()<.5?-1:1)*sp, harmless:true }); }
   } else if(stageType==='mega'){
     // "The Big": one giant Qix with hit points; damage it (by capturing) to make it split in two
     const mq = makeQix((6.5 + level*0.4) * dmul()); mq.mega=true; mq.tail=[];
@@ -523,10 +527,14 @@ function startLevel(){
       for(let i=0;i<nQ;i++) qixes.push(makeQix((8.5 + level*0.6) * dmul() * rushBoost));
     }
   }
-  // sparx edge-runners (none during the bonus breather)
+  // sparx edge-runners that PATROL the whole perimeter (one clockwise, one counter-clockwise …)
   sparx = [];
-  const nSp = bonusStage ? 0 : Math.min(Math.floor(level/2), 3);
-  for(let i=0;i<nSp;i++) sparx.push({ x: i? COLS-2:1, y: 0, px:-1,py:-1, acc:0 });
+  const nSp = bonusStage ? 0 : Math.min(1 + Math.floor((level-1)/3), 3);
+  for(let i=0;i<nSp;i++){
+    const x = i? COLS-2 : 1;
+    // seed a heading along the top edge so they set off in opposite directions and circle the lines
+    sparx.push({ x, y:0, px:(i? x+1 : x-1), py:0, acc:0 });
+  }
   // boss
   boss = null;
   if(bossLevel){
@@ -543,7 +551,7 @@ function startLevel(){
   } else if(stageType==='rush'){
     showToast('⚡ RUSH — clear it fast!', 1600);
   } else if(bonusStage){
-    bonusTimer = 12; showToast('🎁 BONUS — grab the gifts!', 1600);
+    bonusTimer = 16; showToast('🎁 BONUS — wall off areas for big points!', 1900);
   }
   pickups = [];
   particles = [];
@@ -552,7 +560,7 @@ function startLevel(){
   readyTimer = 1.2; shake = 0;
   fuse = {active:false, pos:0, idle:0}; cmdDir = null; held = null;
   levelStartTime = performance.now();
-  if(bonusStage) for(let i=0;i<7;i++) spawnBonusGift();   // shower the board after pickups was reset
+  if(bonusStage) for(let i=0;i<3;i++) spawnBonusGift();   // a few gems for extra flavour after reset
   updateHUD();
 }
 
@@ -638,13 +646,8 @@ function closeTrail(){
   player.drawing = false; player.drawDir = null;
   fuse.active=false; fuse.pos=0; fuse.idle=0;
 
-  // BONUS round: no flood-capture (that would instant-clear an enemy-less board) — just bank the line
-  if(bonusStage){
-    scheduleFillAnim(trailCells, []);
-    score += Math.round(trailLen*4*level*(pus.gem>0?2:1)); SFX.fill(0.3); updateHUD(); return;
-  }
-
   // 2) flood from every enemy sitting in EMPTY water; unreached EMPTY gets filled
+  //    (in the bonus round the harmless orbs are the seeds — enclose orb-free regions to claim them)
   const seen = new Uint8Array(COLS*ROWS);
   const seeds = [];
   const addSeed = (cx,cy)=>{ if(inB(cx,cy) && grid[idx(cx,cy)]===EMPTY) seeds.push(idx(cx,cy)); };
@@ -669,7 +672,7 @@ function closeTrail(){
   if(gained>0){
     if(comboTimer>0) combo = Math.min(combo+1, 9); else combo = 1;
     comboTimer = 4;
-    let pts = Math.round(gained * 6 * level * combo * qixMult * (pus.gem>0?2:1));
+    let pts = Math.round(gained * 6 * level * combo * qixMult * (pus.gem>0?2:1) * (bonusStage?2:1));
     // fast-draw bonus: lots of area for a short trail
     if(filled > trailLen*3 && trailLen>0) pts = Math.round(pts*1.4);
     score += pts;
@@ -840,11 +843,11 @@ function update(dt){
 
   if(readyTimer>0){ readyTimer-=dt; return; }
 
-  // BONUS round countdown → auto-finish; keep the board stocked with gifts
+  // BONUS round countdown → auto-finish (or when the board's basically full); sprinkle the odd gem
   if(bonusStage){
     bonusTimer -= dt;
-    if(pickups.length<4 && Math.random()<dt*1.6) spawnBonusGift();
-    if(bonusTimer<=0){ return levelComplete(); }
+    if(pickups.length<2 && Math.random()<dt*0.5) spawnBonusGift();
+    if(bonusTimer<=0 || claimedCount/interiorTotal>=0.98){ return levelComplete(); }
   }
   // 🧲 MAGNET: vacuum up any gift within reach
   if(pus.magnet>0){
@@ -1099,12 +1102,19 @@ function isFrontier(x,y){
        ||(inB(x-1,y)&&grid[idx(x-1,y)]===TRAIL)||(inB(x+1,y)&&grid[idx(x+1,y)]===TRAIL)
        ||(inB(x,y-1)&&grid[idx(x,y-1)]===TRAIL)||(inB(x,y+1)&&grid[idx(x,y+1)]===TRAIL);
 }
-// Qix-mode "you may only travel the lines": the outer frame is always walkable,
-// plus any claimed cell on the edge of unclaimed territory. Deep filled interior is not.
+// Qix-mode "you may only travel the WHITE LINES": a cell is walkable only if it borders unclaimed
+// sea (isFrontier). The board-edge frame is walkable ONLY where it still touches the play area — a
+// buried frame segment (claimed land on its inner side) has no white line and is NOT walkable. Board
+// corners have no sea neighbour of their own, so an edge cell also stays walkable when an orthogonal
+// neighbour is itself a white line — this bridges the four corners without opening up buried frame.
 function walkable(x,y){
   if(!inB(x,y) || grid[idx(x,y)]!==LAND) return false;
-  if(x===0 || y===0 || x===COLS-1 || y===ROWS-1) return true;   // outer perimeter — always a line
-  return isFrontier(x,y);                                       // ONLY the white lines (edge of claimed land)
+  if(isFrontier(x,y)) return true;
+  if(x===0 || y===0 || x===COLS-1 || y===ROWS-1){
+    for(const [nx,ny] of [[x-1,y],[x+1,y],[x,y-1],[x,y+1]])
+      if(inB(nx,ny) && grid[idx(nx,ny)]===LAND && isFrontier(nx,ny)) return true;   // corner/edge connector
+  }
+  return false;
 }
 // Nearest cell the player is allowed to stand on (an edge in Qix mode, any land in free-roam).
 // Used to drop the player back onto the closest edge after a crash.
@@ -1131,21 +1141,23 @@ function nearestFrontier(x,y){
 function moveSparx(dt){
   const stepRate = (7 + level*0.8) * dmul(); // cells/sec along the frontier
   for(const s of sparx){
-    if(!isFrontier(s.x,s.y)){ const f=nearestFrontier(s.x,s.y); s.x=f.x; s.y=f.y; s.px=-1; s.py=-1; }
+    if(!walkable(s.x,s.y)){ const f=nearestFrontier(s.x,s.y); s.x=f.x; s.y=f.y; s.px=-1; s.py=-1; }
     s.acc += dt*stepRate;
     while(s.acc>=1){
       s.acc-=1;
       const opts=[];
       for(const [nx,ny] of [[s.x-1,s.y],[s.x+1,s.y],[s.x,s.y-1],[s.x,s.y+1]]){
-        if(isFrontier(nx,ny) && !(nx===s.px&&ny===s.py)) opts.push({x:nx,y:ny});
+        if(walkable(nx,ny) && !(nx===s.px&&ny===s.py)) opts.push({x:nx,y:ny});   // travel the whole white line, corners included
       }
       let next;
       if(opts.length){
-        // chase: pick frontier neighbour closest to player, with a little randomness
-        opts.sort((a,b)=>(Math.abs(a.x-player.x)+Math.abs(a.y-player.y))-(Math.abs(b.x-player.x)+Math.abs(b.y-player.y)));
-        next = (Math.random()<0.8)?opts[0]:opts[(Math.random()*opts.length)|0];
+        // PATROL the whole perimeter: keep circling in the current heading; only turn where the line
+        // turns. This makes Sparx travel all the way around the lines instead of clustering near you.
+        const hx=s.x-s.px, hy=s.y-s.py;
+        const straight = (s.px>=0) && opts.find(o=>o.x-s.x===hx && o.y-s.y===hy);
+        next = straight || opts[0];
       } else {
-        // dead end — allow stepping back
+        // dead end — reverse and keep going the other way around
         next = {x:s.px<0?s.x:s.px, y:s.py<0?s.y:s.py};
       }
       s.px=s.x; s.py=s.y; s.x=next.x; s.y=next.y;
@@ -1158,8 +1170,8 @@ function hitsTrail(fx,fy){ return inB(fx|0,fy|0) && grid[idx(fx|0,fy|0)]===TRAIL
 
 function checkEnemyCollisions(){
   if(readyTimer>0) return;
-  // balls
-  for(const b of balls){ if(hitsTrail(b.x,b.y)) return loseLife('ball-trail'); if(hitPlayer(b.x,b.y)) return loseLife('ball'); }
+  // balls (bonus-round seed orbs are harmless)
+  for(const b of balls){ if(b.harmless) continue; if(hitsTrail(b.x,b.y)) return loseLife('ball-trail'); if(hitPlayer(b.x,b.y)) return loseLife('ball'); }
   for(const q of qixes){ if(hitsTrail(q.x,q.y)) return loseLife('qix-trail'); if(hitPlayer(q.x,q.y)) return loseLife('qix'); }
   if(boss){ if(hitsTrail(boss.x,boss.y)) return loseLife('boss-trail');
     if(Math.abs(boss.x-player.x)<1.3 && Math.abs(boss.y-player.y)<1.3) return loseLife('boss'); }
@@ -1233,7 +1245,7 @@ function draw(){
   }
   // sea balls
   for(const b of balls){ const cx=(b.x)*CELL, cy=(b.y)*CELL;
-    ctx.fillStyle='#f43f5e'; ctx.beginPath(); ctx.arc(cx,cy,CELL*0.7,0,7); ctx.fill();
+    ctx.fillStyle=b.harmless?'#34d399':'#f43f5e'; ctx.beginPath(); ctx.arc(cx,cy,CELL*0.7,0,7); ctx.fill();
     ctx.fillStyle='rgba(255,255,255,.5)'; ctx.beginPath(); ctx.arc(cx-CELL*0.2,cy-CELL*0.2,CELL*0.22,0,7); ctx.fill();
   }
   // qixes (the mega-Qix "The Big" renders large with an ominous halo until it splits)
@@ -1351,7 +1363,7 @@ function updateHUD(){
   document.getElementById('puwrap').innerHTML = pw.map(p=>`<span class="pu" style="background:${p[2]}">${p[0]}${Math.ceil(p[1])}</span>`).join(' ');
   if(boss){ document.getElementById('barlabel').innerHTML = '<b>'+pct+'%</b><span>BOSS '+Math.round(boss.hp/boss.maxhp*100)+'%</span>'; }
   else if(stageType==='mega' && !megaSplit){ document.getElementById('barlabel').innerHTML = '<b>'+pct+'%</b><span>◆ THE BIG '+Math.max(0,megaHp|0)+'</span>'; }
-  else if(bonusStage){ document.getElementById('barlabel').innerHTML = '<b>🎁 '+Math.max(0,Math.ceil(bonusTimer))+'s</b><span>grab gifts!</span>'; }
+  else if(bonusStage){ document.getElementById('barlabel').innerHTML = '<b>'+pct+'%</b><span>🎁 '+Math.max(0,Math.ceil(bonusTimer))+'s left</span>'; }
 }
 
 const screens=['screen-title','screen-how','screen-lb','screen-lobby','screen-pause','screen-clear','screen-over'];
