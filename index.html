@@ -447,6 +447,7 @@ let trail=[];
 let readyTimer=0, shake=0, levelStartTime=0;
 let fuse={active:false, pos:0, idle:0};   // Qix "fuse": a spark that burns down your line if you stop drawing
 let cmdDir=null, armLine=false, held=null;   // held = the currently-held move direction (hold-to-move / joystick / tilt)
+let heldPrev=null;                            // held on the previous frame — used to detect a FRESH press (draw intent)
 let qixMult=1, splitLevel=false;          // twin-Qix split multiplier (permanent, caps at 9) + is this a split level
 let stageType='normal';                   // normal | boss | mega | split | maze | rush | bonus
 let bonusStage=false, bonusTimer=0;       // bonus round: gift shower + countdown, no enemies, no flood-capture
@@ -498,7 +499,8 @@ function startLevel(){
   // rush = fast + low target; bonus = grab-fest (target unreachable, ends on timer); else normal/boss
   target = stageType==='rush' ? 0.42 : (bossLevel||stageType==='mega') ? 0.55 : bonusStage ? 2 : Math.min(0.82, 0.72 + level*0.004);
   trail = [];
-  player = { x: (COLS/2)|0, y:0, dir:{x:0,y:0}, queued:null, onLand:true, stepAcc:0, drawing:false, drawDir:null };
+  player = { x: (COLS/2)|0, y:0, dir:{x:0,y:0}, queued:null, onLand:true, stepAcc:0, drawing:false, drawDir:null, travel:{x:0,y:0}, drawArmed:false };
+  heldPrev = null;
 
   // Enemies match the chosen game: XONIX = bouncing sea balls; QIX = the line-creature(s).
   balls = []; qixes = [];
@@ -852,8 +854,17 @@ function update(dt){
   }
 
   // hold-to-move on the edges; but once you're DRAWING a line it commits and keeps going
+  // A FRESH directional press that points straight into the green = intent to cut a new line;
+  // it LATCHES (rate-limited movement may fire the step a few frames later). A sustained hold that
+  // later curves into green was never armed, so it follows the white perimeter around the corner.
+  if(held!==null && held!==heldPrev){
+    const d=DIRS[held], fx=player.x+d.x, fy=player.y+d.y;
+    player.drawArmed = inB(fx,fy) && grid[idx(fx,fy)]===EMPTY;
+  }
+  if(held===null) player.drawArmed=false;
   if(held) player.queued = DIRS[held];
   else if(player.drawing && player.drawDir) player.queued = {x:player.drawDir.x, y:player.drawDir.y};
+  heldPrev = held;
   const tlBefore = trail.length;
   movePlayer(dt);
   if(state!=='playing') return;
@@ -873,6 +884,23 @@ function update(dt){
   checkEnemyCollisions();
 }
 
+// Follow the white perimeter around a corner: given the player pushing direction p.dir into green,
+// return a walkable perpendicular step that continues along the edge (preferring not to reverse),
+// or null at a dead-end / peninsula tip.
+function followTurn(p){
+  const D=p.dir;
+  const perps = (D.x!==0) ? [{x:0,y:1},{x:0,y:-1}] : [{x:1,y:0},{x:-1,y:0}];
+  const back = p.travel ? {x:-p.travel.x,y:-p.travel.y} : null;
+  let fallback=null;
+  for(const P of perps){
+    if(walkable(p.x+P.x, p.y+P.y)){
+      if(back && P.x===back.x && P.y===back.y){ fallback = fallback||P; continue; }  // avoid reversing unless it's the only edge
+      return P;
+    }
+  }
+  return fallback;
+}
+
 function movePlayer(dt){
   const p = player;
   // Qix invariant: when not drawing you must always be on an edge. If a prior capture
@@ -889,6 +917,15 @@ function movePlayer(dt){
       p.dir={x:0,y:0}; fuse.active=true;
     } else { p.dir = q; }
     p.queued = null;
+  }
+  // Qix perimeter-follow: if the chosen direction heads into the green and it's NOT a deliberate
+  // fresh press, turn to follow the white line around the corner (or stop) — resolved once per
+  // frame BEFORE stepping so the rate-limited step actually carries the turn.
+  if(MODE==='qix' && !p.drawing && (p.dir.x||p.dir.y) && !p.drawArmed){
+    const fx=p.x+p.dir.x, fy=p.y+p.dir.y;
+    if(inB(fx,fy) && grid[idx(fx,fy)]===EMPTY){
+      const t=followTurn(p); p.dir = t || {x:0,y:0};
+    }
   }
   if(!p.dir.x && !p.dir.y) return;
   const speed = pus.speed>0 ? 22 : 15;       // cells / second
@@ -912,9 +949,12 @@ function movePlayer(dt){
     }
     // Qix mode: may ONLY travel the outer frame + edges of claimed land — never filled interior.
     if(s===LAND && MODE==='qix' && !p.drawing && !walkable(nx,ny)){ p.dir={x:0,y:0}; break; }
-    p.x=nx; p.y=ny;
+    // Sustained hold into green is redirected to a perimeter-follow above; reaching green here
+    // without a deliberate fresh press (e.g. a 2nd corner mid-frame) → stop, never draw by accident.
+    if(s===EMPTY && MODE==='qix' && !p.drawing && !p.drawArmed){ p.dir={x:0,y:0}; break; }
+    p.x=nx; p.y=ny; p.travel={x:p.dir.x,y:p.dir.y};
     if(s===EMPTY){
-      grid[idx(nx,ny)] = TRAIL; trail.push(idx(nx,ny)); p.drawing=true; p.onLand=false; p.drawDir={x:p.dir.x,y:p.dir.y};
+      grid[idx(nx,ny)] = TRAIL; trail.push(idx(nx,ny)); p.drawing=true; p.onLand=false; p.drawDir={x:p.dir.x,y:p.dir.y}; p.drawArmed=false;
       if(trail.length%4===0) SFX.small();
     } else { // LAND
       if(p.drawing){
