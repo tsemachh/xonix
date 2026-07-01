@@ -660,7 +660,7 @@ function update(dt){
   // Qix fuse: stop too long mid-draw and a spark races down your line toward you
   if(player.drawing && trail.length){
     if(trail.length > tlBefore){ fuse.active=false; fuse.pos=0; fuse.idle=0; }   // still drawing → safe
-    else { fuse.idle += dt; if(fuse.idle > 0.45) fuse.active = true; }
+    else { fuse.idle += dt; if(fuse.idle > 4) fuse.active = true; }   // only after 4s of standing still mid-draw
     if(fuse.active){ fuse.pos += dt*18; if(fuse.pos >= trail.length){ loseLife('fuse'); return; } }
   } else { fuse.active=false; fuse.pos=0; fuse.idle=0; }
   const enemyDt = pus.slow>0 ? dt*0.5 : dt;
@@ -861,9 +861,11 @@ function draw(){
       ctx.fillRect(x*CELL, y*CELL, CELL, CELL);
     }
   }
-  // Qix "rails": glow the edges of claimed land (this is exactly where you can travel in Qix mode)
+  // Qix "rails": a BOLD bright border on the edges of claimed land — this is exactly the track
+  // the marker can travel along. Anything not outlined is either open sea (drawing) or filled interior.
   if(MODE==='qix'){
-    ctx.strokeStyle='rgba(190,244,255,.55)'; ctx.lineWidth=1.5; ctx.beginPath();
+    ctx.save();
+    ctx.beginPath();
     for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
       if(grid[idx(x,y)]!==LAND) continue;
       const X=x*CELL, Y=y*CELL;
@@ -872,7 +874,10 @@ function draw(){
       if(inB(x-1,y)&&grid[idx(x-1,y)]===EMPTY){ ctx.moveTo(X,Y); ctx.lineTo(X,Y+CELL); }
       if(inB(x+1,y)&&grid[idx(x+1,y)]===EMPTY){ ctx.moveTo(X+CELL,Y); ctx.lineTo(X+CELL,Y+CELL); }
     }
-    ctx.stroke();
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.strokeStyle='rgba(20,40,90,.9)'; ctx.lineWidth=4; ctx.stroke();          // dark under-stroke for contrast
+    ctx.strokeStyle='#f2ffff'; ctx.lineWidth=2.4; ctx.shadowColor='#3ae6ff'; ctx.shadowBlur=7; ctx.stroke();  // bright rail
+    ctx.restore();
   }
   // trail glow
   if(trail.length){
