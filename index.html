@@ -867,6 +867,7 @@ function update(dt){
   if(held===null) player.drawArmed=false;
   if(held) player.queued = DIRS[held];
   else if(player.drawing && player.drawDir) player.queued = {x:player.drawDir.x, y:player.drawDir.y};
+  else if(!player.drawing) player.dir={x:0,y:0};   // released & not drawing → stop (hold-to-move)
   heldPrev = held;
   const tlBefore = trail.length;
   movePlayer(dt);
@@ -887,21 +888,28 @@ function update(dt){
   checkEnemyCollisions();
 }
 
-// Follow the white perimeter around a corner: given the player pushing direction p.dir into green,
-// return a walkable perpendicular step that continues along the edge (preferring not to reverse),
-// or null at a dead-end / peninsula tip.
+// Follow the white perimeter: when the pushed direction can't go straight (sea ahead, or your own
+// filled land), pick the neighbouring white-line cell that best continues in that direction. Considers
+// DIAGONAL steps too, so a staircase/diagonal jog in the boundary is traversable instead of dead-ending
+// (that was the "can't move, only draws" trap). Diagonals must hug the land corner — never cut open sea.
+const DIRS8=[{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1},{x:1,y:1},{x:1,y:-1},{x:-1,y:1},{x:-1,y:-1}];
 function followTurn(p){
-  const D=p.dir;
-  const perps = (D.x!==0) ? [{x:0,y:1},{x:0,y:-1}] : [{x:1,y:0},{x:-1,y:0}];
-  const back = p.travel ? {x:-p.travel.x,y:-p.travel.y} : null;
-  let fallback=null;
-  for(const P of perps){
-    if(walkable(p.x+P.x, p.y+P.y)){
-      if(back && P.x===back.x && P.y===back.y){ fallback = fallback||P; continue; }  // avoid reversing unless it's the only edge
-      return P;
+  const D=p.dir, tv=p.travel||{x:0,y:0};
+  let best=null, bestScore=-9;
+  for(const d of DIRS8){
+    const nx=p.x+d.x, ny=p.y+d.y;
+    if(!walkable(nx,ny)) continue;
+    if(d.x&&d.y){                                   // diagonal: must go through a land corner, not open sea
+      const oa=inB(p.x+d.x,p.y)&&grid[idx(p.x+d.x,p.y)]===LAND;
+      const ob=inB(p.x,p.y+d.y)&&grid[idx(p.x,p.y+d.y)]===LAND;
+      if(!oa && !ob) continue;
     }
+    // prefer the step most aligned with where the player is pushing; heavily penalise reversing
+    let score = d.x*D.x + d.y*D.y;
+    if(d.x===-tv.x && d.y===-tv.y && (tv.x||tv.y)) score -= 4;
+    if(score>bestScore){ bestScore=score; best=d; }
   }
-  return fallback;
+  return best;
 }
 
 function movePlayer(dt){
@@ -926,9 +934,9 @@ function movePlayer(dt){
   // frame BEFORE stepping so the rate-limited step actually carries the turn.
   if(MODE==='qix' && !p.drawing && (p.dir.x||p.dir.y) && !p.drawArmed){
     const fx=p.x+p.dir.x, fy=p.y+p.dir.y;
-    if(inB(fx,fy) && grid[idx(fx,fy)]===EMPTY){
-      const t=followTurn(p); p.dir = t || {x:0,y:0};
-    }
+    // can't go straight? (sea ahead, your own filled land, or the board edge) → follow the line instead
+    const blocked = !inB(fx,fy) || grid[idx(fx,fy)]===EMPTY || (grid[idx(fx,fy)]===LAND && !walkable(fx,fy));
+    if(blocked){ const t=followTurn(p); p.dir = t || {x:0,y:0}; }
   }
   if(!p.dir.x && !p.dir.y) return;
   const speed = pus.speed>0 ? 22 : 15;       // cells / second
