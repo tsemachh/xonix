@@ -45,7 +45,7 @@
     border-radius:8px;width:34px;height:28px;font-size:14px;cursor:pointer;}
   .tbtn:active{transform:scale(.94);}
   /* ---- play area ---- */
-  #stage{flex:1 1 auto;position:relative;display:flex;align-items:center;justify-content:center;min-height:0;}
+  #stage{flex:1 1 auto;position:relative;display:flex;align-items:center;justify-content:center;min-height:0;padding:8px 8px 30px;}
   canvas{background:#2238c2;border-radius:10px;border:2px solid #4f6bff;
     box-shadow:0 8px 40px rgba(0,0,0,.6), 0 0 24px rgba(60,90,255,.25), inset 0 0 60px rgba(20,40,120,.3);
     max-width:100%;max-height:100%;image-rendering:auto;display:block;}
@@ -1423,8 +1423,9 @@ try{ if(!('ontouchstart' in window) && !(navigator.maxTouchPoints>0)) document.d
 function fitCanvas(){
   try{
     const s=document.getElementById('stage'); if(!s) return;
-    const M=16;   // keep symmetric breathing room around the board (top & bottom)
-    const availW=s.clientWidth-M*2, availH=s.clientHeight-M*2; if(availW<=0||availH<=0) return;
+    const cs=getComputedStyle(s);
+    const padL=parseFloat(cs.paddingLeft)||0, padR=parseFloat(cs.paddingRight)||0, padT=parseFloat(cs.paddingTop)||0, padB=parseFloat(cs.paddingBottom)||0;
+    const availW=s.clientWidth-padL-padR, availH=s.clientHeight-padT-padB; if(availW<=0||availH<=0) return;
     const ar=W/H; let w=availW, h=w/ar; if(h>availH){ h=availH; w=h*ar; }
     canvas.style.width=Math.floor(w)+'px'; canvas.style.height=Math.floor(h)+'px';
   }catch(e){}
