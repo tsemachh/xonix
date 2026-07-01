@@ -1,11 +1,12 @@
 /* Xonix - service worker.
  * Network-FIRST for the page/scripts so a new deploy is picked up immediately when online,
  * with an offline cache fallback. Static icons stay cache-first. */
-const CACHE = 'xonix-v3';
+const CACHE = 'xonix-v4';
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
+  './favicon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
