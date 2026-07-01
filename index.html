@@ -660,7 +660,7 @@ function update(dt){
   // Qix fuse: stop too long mid-draw and a spark races down your line toward you
   if(player.drawing && trail.length){
     if(trail.length > tlBefore){ fuse.active=false; fuse.pos=0; fuse.idle=0; }   // still drawing → safe
-    else { fuse.idle += dt; if(fuse.idle > 4) fuse.active = true; }   // only after 4s of standing still mid-draw
+    else { fuse.idle += dt; if(fuse.idle > 2) fuse.active = true; }   // only after 2s of standing still mid-draw
     if(fuse.active){ fuse.pos += dt*18; if(fuse.pos >= trail.length){ loseLife('fuse'); return; } }
   } else { fuse.active=false; fuse.pos=0; fuse.idle=0; }
   const enemyDt = pus.slow>0 ? dt*0.5 : dt;
