@@ -462,7 +462,7 @@ function resetBoard(){
 function startLevel(){
   resetBoard();
   const bossLevel = (level % 5 === 0);
-  splitLevel = (!bossLevel && level>=3 && level%3===0);   // twin-Qix "split" level
+  splitLevel = (!bossLevel && level>=4 && level%4===0);   // twin-Qix "split" level (4, 8, 12, 16… skipping bosses)
   target = bossLevel ? 0.55 : Math.min(0.82, 0.72 + level*0.004);
   trail = [];
   player = { x: (COLS/2)|0, y:0, dir:{x:0,y:0}, queued:null, onLand:true, stepAcc:0, drawing:false };
@@ -478,7 +478,7 @@ function startLevel(){
   // qix line-creatures — the primary threat (present from level 1; two on split levels)
   qixes = [];
   if(!bossLevel){
-    const nQ = splitLevel ? 2 : (level>=8 ? 2 : 1);
+    const nQ = splitLevel ? 2 : 1;   // two Qixes only on twin-Qix (split) levels; difficulty otherwise scales via speed
     for(let i=0;i<nQ;i++) qixes.push(makeQix(7 + level*0.35));
   }
   // sparx edge-runners
