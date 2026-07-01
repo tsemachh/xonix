@@ -366,6 +366,8 @@ const SFX = {
   death(){ noise(0.4,0.25); tone(300,0.5,'sawtooth',0.2,60); },
   powerup(){ tone(660,0.07,'triangle',0.16); tone(990,0.09,'triangle',0.16); tone(1320,0.12,'triangle',0.14); },
   level(){ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>tone(f,0.18,'triangle',0.16),i*90)); },
+  levelWin(){ [523,659,784,1047,1319].forEach((f,i)=>setTimeout(()=>tone(f,0.15,'square',0.16),i*85));
+    setTimeout(()=>{ [523,659,784,1047].forEach(f=>tone(f,0.6,'triangle',0.09)); }, 470); },
   boss(){ tone(110,0.5,'sawtooth',0.22,70); },
   start(){ tone(440,0.08,'square',0.14); tone(660,0.1,'square',0.12); },
 };
@@ -446,6 +448,7 @@ let readyTimer=0, shake=0, levelStartTime=0;
 let fuse={active:false, pos:0, idle:0};   // Qix "fuse": a spark that burns down your line if you stop drawing
 let cmdDir=null, armLine=false;           // cmdDir = glide dir (only while drawing); armLine = a fresh tap may start a line
 let qixMult=1, splitLevel=false;          // twin-Qix split multiplier (permanent, caps at 9) + is this a split level
+let clearAnim=0, revealRow=0, clearSplit=false, pendingClear=null;   // stage-clear celebration state
 let pus={shield:0, slow:0, freeze:0, speed:0};  // remaining seconds
 let picColors = new Array(COLS*ROWS);
 
@@ -656,20 +659,52 @@ function loseLife(reason){
 }
 
 function levelComplete(split){
-  state='clear'; MUSIC.stop(); SFX.level(); vibrate([20,40,20]);
+  MUSIC.stop(); SFX.levelWin(); vibrate([20,40,20,60]); shake=10;
   const timeSec = (performance.now()-levelStartTime)/1000;
   const timeBonus = Math.round(Math.max(0, Math.round((90 - timeSec)) ) * 5 * qixMult);
   const lifeBonus = lives*200*qixMult;
   const lvlBonus = level*150*qixMult;
   score += timeBonus + lifeBonus + lvlBonus;
   if(score>best){ best=score; LS.best=best; }
-  document.getElementById('clearTitle').textContent = split ? ('QIX SPLIT!  ×'+qixMult) : ((level%5===0)?'BOSS DOWN!':'LEVEL '+level+' CLEAR');
-  document.getElementById('clearStats').innerHTML =
-    `Claimed <b>${Math.round(claimedCount/interiorTotal*100)}%</b> · `+
-    `Time bonus <b>${timeBonus}</b> · Life bonus <b>${lifeBonus}</b>`+
-    (qixMult>1?` · <b style="color:#f472b6">SPLIT ×${qixMult}</b>`:'')+
-    `<br>Score <b>${score.toLocaleString()}</b>`;
-  document.getElementById('clearFact').innerHTML = FACTS[(level) % FACTS.length];
+  // stash what the clear screen will show once the celebration finishes
+  pendingClear = {
+    title: split ? ('QIX SPLIT!  ×'+qixMult) : ((level%5===0)?'BOSS DOWN!':'LEVEL '+level+' CLEAR'),
+    stats: `Claimed <b>${Math.round(claimedCount/interiorTotal*100)}%</b> · `+
+      `Time bonus <b>${timeBonus}</b> · Life bonus <b>${lifeBonus}</b>`+
+      (qixMult>1?` · <b style="color:#f472b6">SPLIT ×${qixMult}</b>`:'')+
+      `<br>Score <b>${score.toLocaleString()}</b>`,
+    fact: FACTS[(level) % FACTS.length]
+  };
+  // freeze the round and play the celebratory picture-reveal before the next stage
+  balls=[]; qixes=[]; sparx=[]; boss=null; trail=[]; cmdDir=null; fuse.active=false;
+  clearSplit=!!split; clearAnim=1.8; revealRow=0;
+  for(let i=0;i<44;i++) particles.push({ x:Math.random()*W, y:H*0.42+Math.random()*30,
+    vx:(Math.random()-0.5)*140, vy:-70-Math.random()*140, life:0.9+Math.random()*0.7, max:1.6,
+    c:['#facc15','#34d399','#f472b6','#38bdf8','#fb923c'][(Math.random()*5)|0] });
+  state='clearing';
+  updateHUD();
+}
+// the between-stage celebration: sweep-reveal the hidden picture, rain confetti, then show the stats
+function updateClearing(dt){
+  if(shake>0) shake=Math.max(0,shake-dt*40);
+  revealRow += dt * ROWS / 1.0;               // reveal the remaining sea top→bottom over ~1s
+  const rr = Math.min(ROWS, revealRow|0);
+  for(let y=0;y<rr;y++) for(let x=0;x<COLS;x++){ const i=idx(x,y);
+    if(grid[i]===EMPTY){ grid[i]=LAND;
+      if(Math.random()<0.015) particles.push({ x:(x+0.5)*CELL, y:(y+0.5)*CELL, vx:(Math.random()-0.5)*60,
+        vy:-30-Math.random()*70, life:0.5+Math.random()*0.5, max:1.0,
+        c:['#facc15','#34d399','#f472b6','#38bdf8'][(Math.random()*4)|0] }); }
+  }
+  for(const pt of particles){ pt.x+=pt.vx*dt; pt.y+=pt.vy*dt; pt.vy+=150*dt; pt.life-=dt; }
+  particles = particles.filter(p=>p.life>0);
+  clearAnim -= dt;
+  if(clearAnim<=0) finalizeClear();
+}
+function finalizeClear(){
+  state='clear';
+  document.getElementById('clearTitle').textContent = pendingClear.title;
+  document.getElementById('clearStats').innerHTML = pendingClear.stats;
+  document.getElementById('clearFact').innerHTML = pendingClear.fact;
   show('screen-clear');
   updateHUD();
 }
@@ -985,6 +1020,14 @@ function draw(){
   // particles
   for(const pt of particles){ ctx.globalAlpha=Math.max(0,pt.life/pt.max); ctx.fillStyle=pt.c;
     ctx.fillRect(pt.x-1.5,pt.y-1.5,3,3); } ctx.globalAlpha=1;
+  // stage-clear celebration banner
+  if(state==='clearing'){
+    const a=0.6+0.4*Math.sin(performance.now()/110);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillRect(0,H/2-34,W,68);
+    ctx.shadowColor='#facc15'; ctx.shadowBlur=14; ctx.fillStyle=`rgba(250,204,21,${a})`; ctx.font='bold 30px Verdana';
+    ctx.fillText(clearSplit?'QIX SPLIT!':'STAGE CLEAR!', W/2, H/2); ctx.shadowBlur=0;
+  }
   // ready banner
   if(readyTimer>0 && state==='playing'){
     ctx.fillStyle='rgba(0,0,0,.35)'; ctx.fillRect(0,H/2-26,W,52);
@@ -1487,7 +1530,7 @@ function mpHUD(){
 let last=performance.now();
 function loop(now){
   let dt=(now-last)/1000; last=now; if(dt>0.05) dt=0.05;
-  update(dt);
+  if(state==='clearing') updateClearing(dt); else update(dt);
   draw();
   requestAnimationFrame(loop);
 }
