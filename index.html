@@ -171,6 +171,7 @@
         <button class="ghost" id="howBtn">How to play</button>
         <button class="ghost" id="lbBtn">🏆 Leaderboard</button>
         <button class="ghost" id="factsBtn">Surprising facts</button>
+        <button class="ghost" id="shareBtn">🔗 Share this game</button>
       </div>
       <div class="small" id="bestLine"></div>
       <div class="small" id="moreGames" style="margin-top:4px;opacity:.85;">
@@ -1279,6 +1280,7 @@ onTap('hostBtn', ()=>{ wireNetHandlers(); const code=Net.host();
 onTap('joinBtn', ()=>{ wireNetHandlers(); Net.join(document.getElementById('joinCode').value); });
 onTap('lobbyBack', ()=>{ Net.close(); show('screen-title'); });
 onTap('factsBtn', ()=>{ renderFacts(); show('screen-facts'); });
+onTap('shareBtn', ()=>shareGame());
 onTap('factsBack', ()=>show('screen-title'));
 onTap('lbBtn', ()=>{ show('screen-lb'); loadBoardInto('lbBody', null); });
 onTap('lbBack', ()=>show('screen-title'));
@@ -1303,6 +1305,19 @@ document.getElementById('soundBtn').addEventListener('click', ()=>{
   if(muted){ MUSIC.stop(); }
   else { resumeAudio(); SFX.small(); if(state==='playing'){ MUSIC.setLevel(level); MUSIC.start(); } }
 });
+
+function shareGame(){
+  const url = 'https://tsemachh.github.io/xonix/';
+  const data = { title:'Xonix', text:'Play Xonix — a mobile Qix/Xonix territory-capture arcade game 🎮', url };
+  try{
+    if(navigator.share){ navigator.share(data).catch(()=>{}); return; }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(url).then(()=>showToast('🔗 Link copied!',1300)).catch(()=>prompt('Copy this link:',url));
+      return;
+    }
+  }catch(e){}
+  prompt('Copy this link:', url);
+}
 
 function toMenu(){ state='title'; MP.active=false; MUSIC.stop();
   const lv=document.getElementById('lives'); if(lv) lv.style.color='';
