@@ -448,6 +448,18 @@ let readyTimer=0, shake=0, levelStartTime=0;
 let fuse={active:false, pos:0, idle:0};   // Qix "fuse": a spark that burns down your line if you stop drawing
 let cmdDir=null, armLine=false, held=null;   // held = the currently-held move direction (hold-to-move / joystick / tilt)
 let qixMult=1, splitLevel=false;          // twin-Qix split multiplier (permanent, caps at 9) + is this a split level
+let stageType='normal';                   // normal | boss | mega | split | maze | rush | bonus
+let bonusStage=false, bonusTimer=0;       // bonus round: gift shower + countdown, no enemies, no flood-capture
+let megaHp=0, megaSplit=false;            // "The Big" mega-Qix hit points + whether it has split yet
+// which flavour of stage is this level? (boss slot checked first)
+function classifyStage(l){
+  if(l%5===0) return (MODE==='qix' && l%10===0) ? 'mega' : 'boss';
+  if(MODE==='qix' && l>=4 && l%4===0) return 'split';
+  if(l>=7 && l%7===0) return 'maze';
+  if(l>=6 && l%6===0) return 'rush';
+  if(l>=3 && l%3===0) return 'bonus';
+  return 'normal';
+}
 let clearAnim=0, revealRow=0, clearSplit=false, pendingClear=null;   // stage-clear celebration state
 let pus={shield:0, slow:0, freeze:0, speed:0};  // remaining seconds
 let picColors = new Array(COLS*ROWS);
@@ -478,28 +490,40 @@ function resetBoard(){
 
 function startLevel(){
   resetBoard();
-  const bossLevel = (level % 5 === 0);
-  splitLevel = (MODE==='qix' && !bossLevel && level>=4 && level%4===0);   // twin-Qix "split" level — Qix mode only
-  target = bossLevel ? 0.55 : Math.min(0.82, 0.72 + level*0.004);
+  stageType = classifyStage(level);
+  const bossLevel = stageType==='boss';
+  splitLevel = stageType==='split';
+  bonusStage = stageType==='bonus'; bonusTimer = 0;
+  megaSplit = false; megaHp = 0;
+  // rush = fast + low target; bonus = grab-fest (target unreachable, ends on timer); else normal/boss
+  target = stageType==='rush' ? 0.42 : (bossLevel||stageType==='mega') ? 0.55 : bonusStage ? 2 : Math.min(0.82, 0.72 + level*0.004);
   trail = [];
   player = { x: (COLS/2)|0, y:0, dir:{x:0,y:0}, queued:null, onLand:true, stepAcc:0, drawing:false, drawDir:null };
 
   // Enemies match the chosen game: XONIX = bouncing sea balls; QIX = the line-creature(s).
   balls = []; qixes = [];
-  if(!bossLevel){
+  if(bonusStage){
+    // no enemies — just a shower of gifts to grab against the clock
+  } else if(stageType==='mega'){
+    // "The Big": one giant Qix with hit points; damage it (by capturing) to make it split in two
+    const mq = makeQix((6.5 + level*0.4) * dmul()); mq.mega=true; mq.tail=[];
+    qixes.push(mq);
+    megaHp = 60 + level*10;
+  } else if(!bossLevel){
     if(MODE==='xonix'){
       const nBalls = Math.max(1, Math.min(2 + Math.floor(level*0.7), 8) + (DIFF==='hard'?1:DIFF==='easy'?-1:0));
       for(let i=0;i<nBalls;i++){ const sp = (7.5 + level*0.45 + Math.random()*2) * dmul();
         balls.push({ x: 6+Math.random()*(COLS-12), y: 8+Math.random()*(ROWS-16),
           vx:(Math.random()<.5?-1:1)*sp, vy:(Math.random()<.5?-1:1)*sp }); }
     } else {   // QIX — line creatures only (two on twin-Qix split levels)
+      const rushBoost = stageType==='rush' ? 1.4 : 1;
       const nQ = (splitLevel ? 2 : 1) + (DIFF==='hard' && level>=6 && !splitLevel ? 1 : 0);
-      for(let i=0;i<nQ;i++) qixes.push(makeQix((8.5 + level*0.6) * dmul()));
+      for(let i=0;i<nQ;i++) qixes.push(makeQix((8.5 + level*0.6) * dmul() * rushBoost));
     }
   }
-  // sparx edge-runners
+  // sparx edge-runners (none during the bonus breather)
   sparx = [];
-  const nSp = Math.min(Math.floor(level/2), 3);
+  const nSp = bonusStage ? 0 : Math.min(Math.floor(level/2), 3);
   for(let i=0;i<nSp;i++) sparx.push({ x: i? COLS-2:1, y: 0, px:-1,py:-1, acc:0 });
   // boss
   boss = null;
@@ -508,17 +532,53 @@ function startLevel(){
       hp: 100 + level*20, maxhp: 100 + level*20, tail:[], shootAcc:0 };
     SFX.boss();
     showToast('⚠ BOSS', 1300);
+  } else if(stageType==='mega'){
+    SFX.boss(); showToast('◆ THE BIG — damage it to split it! ◆', 2000);
   } else if(splitLevel){
     showToast('◆ TWIN QIX — wall between them to split! ◆', 2000);
+  } else if(stageType==='maze'){
+    stampMazeIslands(); showToast('▦ MAZE — draw around the islands', 1800);
+  } else if(stageType==='rush'){
+    showToast('⚡ RUSH — clear it fast!', 1600);
+  } else if(bonusStage){
+    bonusTimer = 12; showToast('🎁 BONUS — grab the gifts!', 1600);
   }
   pickups = [];
   particles = [];
-  pus = {shield:0, slow:0, freeze:0, speed:0};
+  pus = {shield:0, slow:0, freeze:0, speed:0, gem:0, ghost:0, magnet:0};
   combo = 1; comboTimer = 0;
   readyTimer = 1.2; shake = 0;
   fuse = {active:false, pos:0, idle:0}; cmdDir = null; held = null;
   levelStartTime = performance.now();
+  if(bonusStage) for(let i=0;i<7;i++) spawnBonusGift();   // shower the board after pickups was reset
   updateHUD();
+}
+
+// place a gift on any reachable cell for the bonus round (the border frame counts — it's the
+// only land at level start, so scan the whole grid rather than just the interior).
+function spawnBonusGift(){
+  const cand=[];
+  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+    if(grid[idx(x,y)]===LAND && (MODE!=='qix' || walkable(x,y)) && pickups.every(p=>p.x!==x||p.y!==y)) cand.push([x,y]);
+  }
+  if(!cand.length) return;
+  const [x,y]=cand[(Math.random()*cand.length)|0];
+  const pool = ['gem','gem','life','speed','fillblast','magnet','shield','freeze'];
+  pickups.push({x,y,type:pool[(Math.random()*pool.length)|0],life:11});
+}
+
+// MAZE: stamp a few small solid islands into the sea to draw around (counted as pre-claimed land)
+function stampMazeIslands(){
+  const spots = [ [COLS*0.28|0, ROWS*0.30|0], [COLS*0.72|0, ROWS*0.30|0],
+                  [COLS*0.30|0, ROWS*0.70|0], [COLS*0.70|0, ROWS*0.70|0], [COLS*0.5|0, ROWS*0.5|0] ];
+  const n = 3 + (level>14?1:0);
+  for(let s=0;s<n && s<spots.length;s++){
+    const [ox,oy]=spots[s], w=3, h=3;
+    for(let dy=0;dy<h;dy++) for(let dx=0;dx<w;dx++){
+      const x=ox+dx, y=oy+dy;
+      if(x>1&&x<COLS-2&&y>1&&y<ROWS-2&&grid[idx(x,y)]===EMPTY){ grid[idx(x,y)]=LAND; claimedCount++; fillTime[idx(x,y)]=performance.now(); }
+    }
+  }
 }
 
 function makeQix(sp){
@@ -576,6 +636,12 @@ function closeTrail(){
   player.drawing = false; player.drawDir = null;
   fuse.active=false; fuse.pos=0; fuse.idle=0;
 
+  // BONUS round: no flood-capture (that would instant-clear an enemy-less board) — just bank the line
+  if(bonusStage){
+    scheduleFillAnim(trailCells, []);
+    score += Math.round(trailLen*4*level*(pus.gem>0?2:1)); SFX.fill(0.3); updateHUD(); return;
+  }
+
   // 2) flood from every enemy sitting in EMPTY water; unreached EMPTY gets filled
   const seen = new Uint8Array(COLS*ROWS);
   const seeds = [];
@@ -601,17 +667,19 @@ function closeTrail(){
   if(gained>0){
     if(comboTimer>0) combo = Math.min(combo+1, 9); else combo = 1;
     comboTimer = 4;
-    let pts = Math.round(gained * 6 * level * combo * qixMult);
+    let pts = Math.round(gained * 6 * level * combo * qixMult * (pus.gem>0?2:1));
     // fast-draw bonus: lots of area for a short trail
     if(filled > trailLen*3 && trailLen>0) pts = Math.round(pts*1.4);
     score += pts;
     burst((player.x+0.5)*CELL,(player.y+0.5)*CELL, '#34d399', 14);
-    showToast('+'+pts + (combo>1?'  x'+combo:''), 700);
+    showToast('+'+pts + (combo>1?'  x'+combo:'') + (pus.gem>0?'  💎×2':''), 700);
     SFX.capture(); vibrate(20);
     if(boss){ boss.hp -= Math.round(gained*0.8)+8; if(boss.hp<0) boss.hp=0; }
     maybeSpawnPickup();
   }
   updateHUD();
+
+  damageMega(gained);
 
   // keep the Qix invariant: never leave the player stranded inside filled land
   if(MODE==='qix' && grid[idx(player.x,player.y)]===LAND && !walkable(player.x,player.y)){
@@ -658,7 +726,9 @@ function maybeSpawnPickup(){
     // in Qix mode pickups must sit on a reachable border cell
     const reachable = grid[idx(x,y)]===LAND && (MODE!=='qix' || walkable(x,y));
     if(reachable && (Math.abs(x-player.x)+Math.abs(y-player.y))>6){
-      const types = ['shield','slow','freeze','bomb','life','speed'];
+      // weighted bag: classics common, the shiny new gifts a bit rarer
+      const types = ['shield','slow','freeze','bomb','life','speed',
+                     'gem','gem','ghost','magnet','fillblast'];
       const t = types[(Math.random()*types.length)|0];
       pickups.push({x,y,type:t,life:12});
       return;
@@ -768,6 +838,19 @@ function update(dt){
 
   if(readyTimer>0){ readyTimer-=dt; return; }
 
+  // BONUS round countdown → auto-finish; keep the board stocked with gifts
+  if(bonusStage){
+    bonusTimer -= dt;
+    if(pickups.length<4 && Math.random()<dt*1.6) spawnBonusGift();
+    if(bonusTimer<=0){ return levelComplete(); }
+  }
+  // 🧲 MAGNET: vacuum up any gift within reach
+  if(pus.magnet>0){
+    for(let i=pickups.length-1;i>=0;i--){
+      if(Math.abs(pickups[i].x-player.x)+Math.abs(pickups[i].y-player.y) <= 6){ collectPickup(pickups[i]); pickups.splice(i,1); }
+    }
+  }
+
   // hold-to-move on the edges; but once you're DRAWING a line it commits and keeps going
   if(held) player.queued = DIRS[held];
   else if(player.drawing && player.drawDir) player.queued = {x:player.drawDir.x, y:player.drawDir.y};
@@ -824,6 +907,7 @@ function movePlayer(dt){
         p.x=nx; p.y=ny; fuse.idle=0; if(fuse.pos>trail.length) fuse.pos=trail.length;
         continue;
       }
+      if(pus.ghost>0){ p.x=nx; p.y=ny; continue; }   // 👻 GHOST LINE — pass through your own trail safely
       p.x=nx; p.y=ny; loseLife('self'); return;   // crossed your line elsewhere → crash
     }
     // Qix mode: may ONLY travel the outer frame + edges of claimed land — never filled interior.
@@ -859,6 +943,42 @@ function collectPickup(pu){
     case 'speed': pus.speed=6; showToast('⚡ SPEED',900); break;
     case 'life': lives++; showToast('♥ +1 LIFE',900); break;
     case 'bomb': balls=[]; showToast('💥 CLEAR!',900); burst(W/2,H/2,'#fb923c',40); shake=12; break;
+    case 'gem': pus.gem=8; showToast('💎 SCORE ×2',900); break;
+    case 'ghost': pus.ghost=6; showToast('👻 GHOST LINE',900); break;
+    case 'magnet': pus.magnet=6; showToast('🧲 MAGNET',900); break;
+    case 'fillblast': fillBlast(pu.x,pu.y); showToast('✺ FILL BLAST',900); break;
+  }
+  updateHUD();
+}
+
+// THE BIG: capturing area damages the mega-Qix; enough damage makes it split into two — then
+// isolate the twins to win, just like a split level (and bank the double-points multiplier).
+function damageMega(gained){
+  if(stageType!=='mega' || megaSplit || gained<=0 || !qixes.length) return;
+  megaHp -= gained;
+  if(megaHp<=0){
+    megaSplit=true; splitLevel=true;
+    const m=qixes[0]; m.mega=false;
+    const sp=Math.hypot(m.vx,m.vy)||8;
+    qixes=[ {x:m.x-2,y:m.y,vx:-sp,vy:sp*0.6,tail:[],turn:0}, {x:m.x+2,y:m.y,vx:sp,vy:-sp*0.6,tail:[],turn:0} ];
+    SFX.boss(); shake=14; showToast('◆ IT SPLIT — isolate them! ◆',1800);
+  } else showToast('THE BIG  '+Math.max(0,megaHp|0)+' hp',600);
+}
+
+// FILL BLAST: instantly claim the EMPTY cells in a radius around a point — a free mini-capture
+function fillBlast(px,py){
+  const R=4; const cells=[]; let gained=0;
+  for(let dy=-R;dy<=R;dy++) for(let dx=-R;dx<=R;dx++){
+    if(dx*dx+dy*dy>R*R) continue;
+    const x=px+dx, y=py+dy;
+    if(inB(x,y) && grid[idx(x,y)]===EMPTY){ grid[idx(x,y)]=LAND; claimedCount++; gained++; cells.push(idx(x,y)); }
+  }
+  if(gained>0){
+    scheduleFillAnim([idx(px,py)], cells);
+    let pts = Math.round(gained*6*level*(pus.gem>0?2:1)*qixMult);
+    score += pts; showToast('+'+pts,600); SFX.fill(0.4); burst((px+0.5)*CELL,(py+0.5)*CELL,'#38bdf8',18);
+    damageMega(gained);
+    if(!bonusStage){ const pct=claimedCount/interiorTotal; if(pct>=target) return levelComplete(); }
   }
   updateHUD();
 }
@@ -1076,8 +1196,12 @@ function draw(){
     ctx.fillStyle='#f43f5e'; ctx.beginPath(); ctx.arc(cx,cy,CELL*0.7,0,7); ctx.fill();
     ctx.fillStyle='rgba(255,255,255,.5)'; ctx.beginPath(); ctx.arc(cx-CELL*0.2,cy-CELL*0.2,CELL*0.22,0,7); ctx.fill();
   }
-  // qixes
-  for(const q of qixes) drawCreature(q, '#f472b6');
+  // qixes (the mega-Qix "The Big" renders large with an ominous halo until it splits)
+  for(const q of qixes){
+    if(q.mega){ drawCreature(q, '#a855f7', 2.1);
+      ctx.fillStyle='rgba(168,85,247,.28)'; ctx.beginPath(); ctx.arc(q.x*CELL,q.y*CELL,CELL*2.4,0,7); ctx.fill(); }
+    else drawCreature(q, '#f472b6');
+  }
   // boss
   if(boss){ drawCreature(boss, '#fb923c', 1.7);
     ctx.fillStyle='rgba(251,146,60,.9)'; ctx.beginPath(); ctx.arc(boss.x*CELL,boss.y*CELL,CELL*1.5,0,7); ctx.fill(); }
@@ -1159,8 +1283,8 @@ function drawJoystick(){
   ctx.beginPath(); ctx.arc(joy.x,joy.y,CELL*1.5,0,7); ctx.fill(); ctx.stroke();
   ctx.restore();
 }
-function puColor(t){ return {shield:'#34d399',slow:'#60a5fa',freeze:'#a5f3fc',speed:'#facc15',life:'#f472b6',bomb:'#fb923c'}[t]||'#fff'; }
-function puLetter(t){ return {shield:'S',slow:'~',freeze:'F',speed:'»',life:'+',bomb:'B'}[t]||'?'; }
+function puColor(t){ return {shield:'#34d399',slow:'#60a5fa',freeze:'#a5f3fc',speed:'#facc15',life:'#f472b6',bomb:'#fb923c',gem:'#fde047',ghost:'#e5e7eb',magnet:'#f87171',fillblast:'#38bdf8'}[t]||'#fff'; }
+function puLetter(t){ return {shield:'S',slow:'~',freeze:'F',speed:'»',life:'+',bomb:'B',gem:'◆',ghost:'☺',magnet:'U',fillblast:'✺'}[t]||'?'; }
 
 function burst(x,y,c,n){ for(let i=0;i<n;i++){ const a=Math.random()*7, s=40+Math.random()*120;
   particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:0.5+Math.random()*0.4,max:0.9,c}); } }
@@ -1182,8 +1306,12 @@ function updateHUD(){
   const pw=[]; if(pus.shield>0)pw.push(['🛡',pus.shield,'#34d399']);
   if(pus.slow>0)pw.push(['🐌',pus.slow,'#60a5fa']); if(pus.freeze>0)pw.push(['❄',pus.freeze,'#a5f3fc']);
   if(pus.speed>0)pw.push(['⚡',pus.speed,'#facc15']);
+  if(pus.gem>0)pw.push(['💎',pus.gem,'#fde047']); if(pus.ghost>0)pw.push(['👻',pus.ghost,'#e5e7eb']);
+  if(pus.magnet>0)pw.push(['🧲',pus.magnet,'#f87171']);
   document.getElementById('puwrap').innerHTML = pw.map(p=>`<span class="pu" style="background:${p[2]}">${p[0]}${Math.ceil(p[1])}</span>`).join(' ');
   if(boss){ document.getElementById('barlabel').innerHTML = '<b>'+pct+'%</b><span>BOSS '+Math.round(boss.hp/boss.maxhp*100)+'%</span>'; }
+  else if(stageType==='mega' && !megaSplit){ document.getElementById('barlabel').innerHTML = '<b>'+pct+'%</b><span>◆ THE BIG '+Math.max(0,megaHp|0)+'</span>'; }
+  else if(bonusStage){ document.getElementById('barlabel').innerHTML = '<b>🎁 '+Math.max(0,Math.ceil(bonusTimer))+'s</b><span>grab gifts!</span>'; }
 }
 
 const screens=['screen-title','screen-how','screen-lb','screen-lobby','screen-pause','screen-clear','screen-over'];
