@@ -593,6 +593,8 @@ function closeTrail(){
   if(MODE==='qix' && grid[idx(player.x,player.y)]===LAND && !walkable(player.x,player.y)){
     const sc = nearestSafeCell(player.x,player.y); player.x=sc.x; player.y=sc.y;
   }
+  // keep power-ups reachable: if a capture buried one inside claimed land, move it back to an edge
+  if(MODE==='qix') for(const pu of pickups){ if(!walkable(pu.x,pu.y)){ const s=nearestSafeCell(pu.x,pu.y); pu.x=s.x; pu.y=s.y; } }
 
   // 4) twin-Qix split: isolating the two Qixes into separate regions clears the level (double points)
   if(splitLevel && !boss && qixes.length>=2){
@@ -1153,8 +1155,11 @@ async function loadBoardInto(elId, mineScore){
 // The Qix "fuse" stays meaningful because it builds whenever you're NOT extending your line —
 // i.e. when you reverse/retreat or get stuck — not because you have to hold a button.
 function applyCmd(name){
+  // You can only START a line from a standstill. While auto-gliding an edge, a tap toward the sea
+  // just stops you at the edge (tap again, now stopped, to actually draw).
+  const wasStopped = !!(player && !player.drawing && player.dir.x===0 && player.dir.y===0);
   cmdDir = name || null;
-  armLine = true;   // a deliberate tap: allow this move to start a line if it steps into the sea
+  armLine = wasStopped;
   const d = cmdDir ? DIRS[cmdDir] : null;
   if(MP.active){
     if(MP.over) return; const me = MP.players[MP.myIndex]; if(!me) return;
