@@ -370,6 +370,7 @@ const SFX = {
   levelWin(){ [523,659,784,1047,1319].forEach((f,i)=>setTimeout(()=>tone(f,0.15,'square',0.16),i*85));
     setTimeout(()=>{ [523,659,784,1047].forEach(f=>tone(f,0.6,'triangle',0.09)); }, 470); },
   boss(){ tone(110,0.5,'sawtooth',0.22,70); },
+  fill(dur){ tone(280, dur||0.3, 'triangle', 0.11, 780); tone(560, (dur||0.3)*0.8, 'square', 0.05, 1200); },
   start(){ tone(440,0.08,'square',0.14); tone(660,0.1,'square',0.12); },
 };
 function vibrate(ms){ try{ if(navigator.vibrate) navigator.vibrate(ms); }catch(e){} }
@@ -452,6 +453,7 @@ let qixMult=1, splitLevel=false;          // twin-Qix split multiplier (permanen
 let clearAnim=0, revealRow=0, clearSplit=false, pendingClear=null;   // stage-clear celebration state
 let pus={shield:0, slow:0, freeze:0, speed:0};  // remaining seconds
 let picColors = new Array(COLS*ROWS);
+let fillTime = new Float32Array(COLS*ROWS);   // per-cell time when a freshly-claimed cell "settles" (for the slow fill)
 
 const DIRS = { up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0} };
 
@@ -472,6 +474,7 @@ function resetBoard(){
   for(let x=0;x<COLS;x++){ grid[idx(x,0)]=LAND; grid[idx(x,ROWS-1)]=LAND; }
   for(let y=0;y<ROWS;y++){ grid[idx(0,y)]=LAND; grid[idx(COLS-1,y)]=LAND; }
   claimedCount = 0;
+  fillTime.fill(0);
   buildPicture();
 }
 
@@ -488,12 +491,12 @@ function startLevel(){
   if(!bossLevel){
     if(MODE==='xonix'){
       const nBalls = Math.min(2 + Math.floor(level*0.7), 8);
-      for(let i=0;i<nBalls;i++){ const sp = 6 + level*0.2 + Math.random()*2;
+      for(let i=0;i<nBalls;i++){ const sp = 7.5 + level*0.45 + Math.random()*2;
         balls.push({ x: 6+Math.random()*(COLS-12), y: 8+Math.random()*(ROWS-16),
           vx:(Math.random()<.5?-1:1)*sp, vy:(Math.random()<.5?-1:1)*sp }); }
     } else {   // QIX — line creatures only (two on twin-Qix split levels)
       const nQ = splitLevel ? 2 : 1;
-      for(let i=0;i<nQ;i++) qixes.push(makeQix(7 + level*0.35));
+      for(let i=0;i<nQ;i++) qixes.push(makeQix(8.5 + level*0.6));
     }
   }
   // sparx edge-runners
@@ -545,9 +548,30 @@ function continueGame(){
 }
 
 //---------------------------------------------------------------- capture logic
+// schedule a progressive "flood fill" reveal of a freshly-claimed region, spreading from the drawn line
+function scheduleFillAnim(seedCells, cells){
+  const now = performance.now();
+  for(const s of seedCells) fillTime[s] = now;         // the drawn line settles instantly
+  if(!cells.length) return;
+  const anim = new Uint8Array(COLS*ROWS); for(const c of cells) anim[c]=1;
+  const visited = new Uint8Array(COLS*ROWS);
+  let frontier = [];
+  const PER = 5, CAP = 650;                             // ms per cell of spread, capped
+  for(const s of seedCells){ for(const [nx,ny] of [[s%COLS-1,(s/COLS|0)],[s%COLS+1,(s/COLS|0)],[s%COLS,(s/COLS|0)-1],[s%COLS,(s/COLS|0)+1]]){
+    if(inB(nx,ny)){ const n=idx(nx,ny); if(anim[n]&&!visited[n]){ visited[n]=1; fillTime[n]=now+PER; frontier.push(n); } } } }
+  let d = PER;
+  while(frontier.length){ d += PER; const next=[];
+    for(const c of frontier){ const cx=c%COLS, cy=(c/COLS)|0;
+      for(const [nx,ny] of [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]]) if(inB(nx,ny)){ const n=idx(nx,ny);
+        if(anim[n]&&!visited[n]){ visited[n]=1; fillTime[n]=now+Math.min(d,CAP); next.push(n); } } }
+    frontier = next;
+  }
+  for(const c of cells) if(!visited[c]) fillTime[c] = now + 120;   // any island not reached from the line
+}
 function closeTrail(){
   if(!trail.length){ player.drawing=false; return; }
   // 1) trail -> land
+  const trailCells = trail.slice();
   for(const i of trail){ grid[i]=LAND; claimedCount++; }
   const trailLen = trail.length;
   trail = [];
@@ -570,8 +594,10 @@ function closeTrail(){
     for(const [nx,ny] of nb){ if(inB(nx,ny)){ const ni=idx(nx,ny); if(grid[ni]===EMPTY && !seen[ni]){ seen[ni]=1; stack.push(ni);} } }
   }
   let filled = 0;
-  for(let i=0;i<grid.length;i++){ if(grid[i]===EMPTY && !seen[i]){ grid[i]=LAND; claimedCount++; filled++; } }
+  const newFill = [];
+  for(let i=0;i<grid.length;i++){ if(grid[i]===EMPTY && !seen[i]){ grid[i]=LAND; claimedCount++; filled++; newFill.push(i); } }
   const gained = filled + trailLen;
+  if(gained>0){ scheduleFillAnim(trailCells, newFill); SFX.fill(Math.min(0.55, 0.14 + gained*0.0006)); }
 
   // 3) scoring + combo + boss damage
   if(gained>0){
@@ -843,19 +869,34 @@ function reflect(o, nextX, nextY){
 }
 
 function moveBalls(dt){
-  for(const b of balls){ reflect(b, b.x+b.vx*dt, b.y+b.vy*dt); }
+  for(const b of balls){
+    // smarter: when you're exposed (drawing), nudge toward your line instead of pure bouncing
+    if(player.drawing && trail.length && (b.vx||b.vy) && Math.random() < dt*1.6){
+      const t = trail[(Math.random()*trail.length)|0], sp = Math.hypot(b.vx,b.vy)||8;
+      const a = Math.atan2((t/COLS|0)-b.y, (t%COLS)-b.x) + (Math.random()-0.5)*1.6;
+      b.vx = b.vx*0.7 + Math.cos(a)*sp*0.3; b.vy = b.vy*0.7 + Math.sin(a)*sp*0.3;
+    }
+    reflect(b, b.x+b.vx*dt, b.y+b.vy*dt);
+  }
 }
 
 function moveQixes(dt){
   for(const q of qixes){
     q.turn -= dt;
-    if(q.turn<=0){ // erratic course changes
-      const sp = Math.hypot(q.vx,q.vy);
-      const a = Math.random()*Math.PI*2;
-      q.vx = Math.cos(a)*sp; q.vy = Math.sin(a)*sp; q.turn = 0.5+Math.random();
+    if(q.turn<=0){
+      const sp = Math.hypot(q.vx,q.vy) || 9;
+      let a;
+      if(player.drawing && trail.length){
+        // HUNT the exposed line: aim at a point on the player's trail (with jitter) — much more dangerous
+        const t = trail[(Math.random()*trail.length)|0];
+        a = Math.atan2((t/COLS|0)-q.y, (t%COLS)-q.x) + (Math.random()-0.5)*1.3;
+      } else {
+        a = Math.random()*Math.PI*2;   // otherwise prowl the open area
+      }
+      q.vx = Math.cos(a)*sp; q.vy = Math.sin(a)*sp; q.turn = 0.35 + Math.random()*0.55;
     }
     reflect(q, q.x+q.vx*dt, q.y+q.vy*dt);
-    q.tail.push({x:q.x,y:q.y}); if(q.tail.length>10) q.tail.shift();
+    q.tail.push({x:q.x,y:q.y}); if(q.tail.length>12) q.tail.shift();
   }
 }
 
@@ -911,7 +952,7 @@ function nearestFrontier(x,y){
   return {x,y};
 }
 function moveSparx(dt){
-  const stepRate = 6 + level*0.5; // cells/sec along the frontier
+  const stepRate = 7 + level*0.8; // cells/sec along the frontier
   for(const s of sparx){
     if(!isFrontier(s.x,s.y)){ const f=nearestFrontier(s.x,s.y); s.x=f.x; s.y=f.y; s.px=-1; s.py=-1; }
     s.acc += dt*stepRate;
@@ -955,19 +996,27 @@ function draw(){
   if(MP.active){ mpDraw(); return; }
   ctx.save();
   if(shake>0){ ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake); }
-  // cells
+  // cells (freshly-claimed cells "fill in" over a moment, spreading from the drawn line, with a flash)
+  const nowMs = performance.now();
   for(let y=0;y<ROWS;y++){
     for(let x=0;x<COLS;x++){
-      const s = grid[idx(x,y)];
-      if(s===EMPTY){ ctx.fillStyle = (x+y)&1 ? '#2740d8' : '#2238c2'; }   // classic Atari Qix blue field
-      else if(s===TRAIL){ ctx.fillStyle = '#eafcff'; }
-      else { ctx.fillStyle = picColors[idx(x,y)]; }
-      ctx.fillRect(x*CELL, y*CELL, CELL, CELL);
+      const i = idx(x,y), s = grid[i], X=x*CELL, Y=y*CELL;
+      if(s===EMPTY){ ctx.fillStyle = (x+y)&1 ? '#2740d8' : '#2238c2'; ctx.fillRect(X,Y,CELL,CELL); }
+      else if(s===TRAIL){ ctx.fillStyle = '#eafcff'; ctx.fillRect(X,Y,CELL,CELL); }
+      else if(s===TRAIL2){ ctx.fillStyle = '#ffd9a8'; ctx.fillRect(X,Y,CELL,CELL); }
+      else { // LAND
+        const ft = fillTime[i];
+        if(ft > nowMs){ ctx.fillStyle = (x+y)&1 ? '#2740d8' : '#2238c2'; ctx.fillRect(X,Y,CELL,CELL); }  // not yet reached — still sea
+        else {
+          ctx.fillStyle = owner[i]===2 ? mpLandColor(2,x,y) : picColors[i]; ctx.fillRect(X,Y,CELL,CELL);
+          const age = nowMs - ft;
+          if(age < 190){ ctx.fillStyle = 'rgba(235,255,245,'+(0.6*(1-age/190)).toFixed(3)+')'; ctx.fillRect(X,Y,CELL,CELL); }  // fresh-fill flash
+        }
+      }
     }
   }
-  // Qix "rails": a BOLD bright border on the edges of claimed land — this is exactly the track
-  // the marker can travel along. Anything not outlined is either open sea (drawing) or filled interior.
-  if(MODE==='qix'){
+  // colored borders around claimed areas (both games). In Qix this is also the travel rail.
+  {
     ctx.save();
     ctx.beginPath();
     for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
