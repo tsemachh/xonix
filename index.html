@@ -768,7 +768,9 @@ function update(dt){
 
   if(readyTimer>0){ readyTimer-=dt; return; }
 
-  if(held) player.queued = DIRS[held];   // hold-to-move: keep applying the held direction
+  // hold-to-move on the edges; but once you're DRAWING a line it commits and keeps going
+  if(held) player.queued = DIRS[held];
+  else if(player.drawing && player.drawDir) player.queued = {x:player.drawDir.x, y:player.drawDir.y};
   const tlBefore = trail.length;
   movePlayer(dt);
   if(state!=='playing') return;
@@ -1265,8 +1267,8 @@ function joyStart(cx,cy,id){ resumeAudio(); const p=toCanvas(cx,cy); joy.active=
 function joyMove(cx,cy){ if(!joy.active) return; const p=toCanvas(cx,cy); joy.x=p.x; joy.y=p.y;
   const dx=joy.x-joy.ax, dy=joy.y-joy.ay, max=CELL*3.2, m=Math.hypot(dx,dy);
   if(m>max){ joy.x=joy.ax+dx/m*max; joy.y=joy.ay+dy/m*max; }
-  if(!tilt.active) setHeld(joyDir()); }
-function joyEnd(){ joy.active=false; if(!tilt.active) setHeld(null); }
+  if(!tilt.active){ const d=joyDir(); if(d) setHeld(d); else if(!(player&&player.drawing)) setHeld(null); } }
+function joyEnd(){ joy.active=false; if(!tilt.active && !(player&&player.drawing)) setHeld(null); }
 const stage=document.getElementById('stage');
 stage.addEventListener('touchstart',e=>{ const t=e.changedTouches[0]; joyStart(t.clientX,t.clientY,t.identifier); },{passive:true});
 stage.addEventListener('touchmove',e=>{ for(const t of e.changedTouches) if(t.identifier===joy.id){ joyMove(t.clientX,t.clientY); break; } },{passive:true});
@@ -1288,7 +1290,7 @@ function onTilt(e){
   let n=null;
   if(Math.abs(tilt.sx)>Math.abs(tilt.sy)){ if(Math.abs(tilt.sx)>TILT_DEAD) n=tilt.sx>0?'right':'left'; }
   else { if(Math.abs(tilt.sy)>TILT_DEAD) n=tilt.sy>0?'down':'up'; }
-  setHeld(n);
+  if(n) setHeld(n); else if(!(player&&player.drawing)) setHeld(null);
 }
 function toggleTilt(){
   const btn=document.getElementById('tiltBtn');
