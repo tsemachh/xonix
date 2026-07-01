@@ -861,6 +861,19 @@ function draw(){
       ctx.fillRect(x*CELL, y*CELL, CELL, CELL);
     }
   }
+  // Qix "rails": glow the edges of claimed land (this is exactly where you can travel in Qix mode)
+  if(MODE==='qix'){
+    ctx.strokeStyle='rgba(190,244,255,.55)'; ctx.lineWidth=1.5; ctx.beginPath();
+    for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+      if(grid[idx(x,y)]!==LAND) continue;
+      const X=x*CELL, Y=y*CELL;
+      if(inB(x,y-1)&&grid[idx(x,y-1)]===EMPTY){ ctx.moveTo(X,Y); ctx.lineTo(X+CELL,Y); }
+      if(inB(x,y+1)&&grid[idx(x,y+1)]===EMPTY){ ctx.moveTo(X,Y+CELL); ctx.lineTo(X+CELL,Y+CELL); }
+      if(inB(x-1,y)&&grid[idx(x-1,y)]===EMPTY){ ctx.moveTo(X,Y); ctx.lineTo(X,Y+CELL); }
+      if(inB(x+1,y)&&grid[idx(x+1,y)]===EMPTY){ ctx.moveTo(X+CELL,Y); ctx.lineTo(X+CELL,Y+CELL); }
+    }
+    ctx.stroke();
+  }
   // trail glow
   if(trail.length){
     ctx.fillStyle='rgba(34,211,238,.35)';
@@ -950,7 +963,7 @@ function updateHUD(){
   document.getElementById('bar').style.right = (100-pct)+'%';
   document.getElementById('targetMark').style.left = tgt+'%';
   document.getElementById('barlabel').textContent = pct+'% / '+tgt+'%';
-  document.getElementById('combo').textContent = combo>1 ? ('COMBO x'+combo) : '';
+  document.getElementById('combo').textContent = combo>1 ? ('COMBO x'+combo) : (MODE==='qix'?'QIX · edges only':'FREE-ROAM');
   // active powerups
   const pw=[]; if(pus.shield>0)pw.push(['🛡',pus.shield,'#34d399']);
   if(pus.slow>0)pw.push(['🐌',pus.slow,'#60a5fa']); if(pus.freeze>0)pw.push(['❄',pus.freeze,'#a5f3fc']);
@@ -1410,7 +1423,8 @@ try{ if(!('ontouchstart' in window) && !(navigator.maxTouchPoints>0)) document.d
 function fitCanvas(){
   try{
     const s=document.getElementById('stage'); if(!s) return;
-    const availW=s.clientWidth, availH=s.clientHeight; if(!availW||!availH) return;
+    const M=16;   // keep symmetric breathing room around the board (top & bottom)
+    const availW=s.clientWidth-M*2, availH=s.clientHeight-M*2; if(availW<=0||availH<=0) return;
     const ar=W/H; let w=availW, h=w/ar; if(h>availH){ h=availH; w=h*ar; }
     canvas.style.width=Math.floor(w)+'px'; canvas.style.height=Math.floor(h)+'px';
   }catch(e){}
