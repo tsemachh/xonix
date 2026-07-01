@@ -923,11 +923,8 @@ function isFrontier(x,y){
 // plus any claimed cell on the edge of unclaimed territory. Deep filled interior is not.
 function walkable(x,y){
   if(!inB(x,y) || grid[idx(x,y)]!==LAND) return false;
-  if(x===0 || y===0 || x===COLS-1 || y===ROWS-1) return true;   // outer perimeter — always
-  if(isFrontier(x,y)) return true;                              // an edge cell
-  // also allow ONE cell in from any edge, so convex corners are navigable (you can move up/around freely)
-  for(const [dx,dy] of [[-1,0],[1,0],[0,-1],[0,1]]) if(isFrontier(x+dx,y+dy)) return true;
-  return false;
+  if(x===0 || y===0 || x===COLS-1 || y===ROWS-1) return true;   // outer perimeter — always a line
+  return isFrontier(x,y);                                       // ONLY the white lines (edge of claimed land)
 }
 // Nearest cell the player is allowed to stand on (an edge in Qix mode, any land in free-roam).
 // Used to drop the player back onto the closest edge after a crash.
