@@ -264,7 +264,8 @@
       </div>
       <div id="overLb" class="small"></div>
       <div class="menu">
-        <button class="big" id="retryBtn">↻ Play again</button>
+        <button class="big" id="continueBtn">▶ Continue — Level <span id="contLv">1</span></button>
+        <button class="ghost" id="retryBtn">↻ Restart from Level 1</button>
         <button class="ghost" id="overMenu">Main menu</button>
       </div>
     </div>
@@ -443,7 +444,7 @@ let MODE = LS.mode;   // 'qix' = move on borders/edges only, 'xonix' = free-roam
 let trail=[];
 let readyTimer=0, shake=0, levelStartTime=0;
 let fuse={active:false, pos:0, idle:0};   // Qix "fuse": a spark that burns down your line if you stop drawing
-let cmdDir=null;                          // persistent auto-advance direction (tap once, keep gliding)
+let cmdDir=null, armLine=false;           // cmdDir = glide dir (only while drawing); armLine = a fresh tap may start a line
 let qixMult=1, splitLevel=false;          // twin-Qix split multiplier (permanent, caps at 9) + is this a split level
 let pus={shield:0, slow:0, freeze:0, speed:0};  // remaining seconds
 let picColors = new Array(COLS*ROWS);
@@ -476,7 +477,7 @@ function startLevel(){
   splitLevel = (MODE==='qix' && !bossLevel && level>=4 && level%4===0);   // twin-Qix "split" level — Qix mode only
   target = bossLevel ? 0.55 : Math.min(0.82, 0.72 + level*0.004);
   trail = [];
-  player = { x: (COLS/2)|0, y:0, dir:{x:0,y:0}, queued:null, onLand:true, stepAcc:0, drawing:false };
+  player = { x: (COLS/2)|0, y:0, dir:{x:0,y:0}, queued:null, onLand:true, stepAcc:0, drawing:false, drawDir:null };
 
   // Enemies match the chosen game: XONIX = bouncing sea balls; QIX = the line-creature(s).
   balls = []; qixes = [];
@@ -529,6 +530,16 @@ function newGame(){
   MUSIC.setLevel(level); MUSIC.start();
 }
 
+// continue the run: same level you reached, fresh lives, keep score + multiplier
+function continueGame(){
+  lives=3; combo=1;
+  startLevel();
+  state='playing';
+  hideAllScreens();
+  SFX.start();
+  MUSIC.setLevel(level); MUSIC.start();
+}
+
 //---------------------------------------------------------------- capture logic
 function closeTrail(){
   if(!trail.length){ player.drawing=false; return; }
@@ -536,7 +547,7 @@ function closeTrail(){
   for(const i of trail){ grid[i]=LAND; claimedCount++; }
   const trailLen = trail.length;
   trail = [];
-  player.drawing = false;
+  player.drawing = false; player.drawDir = null;
   fuse.active=false; fuse.pos=0; fuse.idle=0;
 
   // 2) flood from every enemy sitting in EMPTY water; unreached EMPTY gets filled
@@ -639,7 +650,7 @@ function loseLife(reason){
   // respawn on the closest edge to where we crashed (Qix-authentic)
   const safe = nearestSafeCell(dx,dy);
   player.x=safe.x; player.y=safe.y; player.dir={x:0,y:0}; player.queued=null;
-  player.drawing=false; player.onLand=true; player.stepAcc=0;
+  player.drawing=false; player.drawDir=null; player.onLand=true; player.stepAcc=0; cmdDir=null; armLine=false;
   pus.shield = 1.5; readyTimer = 1.0;
   updateHUD();
 }
@@ -667,6 +678,7 @@ function gameOver(){
   state='over'; MUSIC.stop(); if(score>best){ best=score; LS.best=best; }
   document.getElementById('overScore').textContent = score.toLocaleString();
   document.getElementById('overSub').textContent = `Reached level ${level} · Best ${best.toLocaleString()}`;
+  document.getElementById('contLv').textContent = level;
   const sw = document.getElementById('submitWrap');
   if(score>0) sw.classList.remove('hidden'); else sw.classList.add('hidden');
   document.getElementById('overLb').innerHTML='';
@@ -694,7 +706,7 @@ function update(dt){
 
   if(readyTimer>0){ readyTimer-=dt; return; }
 
-  if(cmdDir) player.queued = DIRS[cmdDir];   // auto-advance: keep gliding in the last commanded dir
+  if(player.drawing && cmdDir) player.queued = DIRS[cmdDir];   // auto-glide ONLY while drawing a line
   const tlBefore = trail.length;
   movePlayer(dt);
   if(state!=='playing') return;
@@ -721,8 +733,16 @@ function movePlayer(dt){
   if(MODE==='qix' && !p.drawing && grid[idx(p.x,p.y)]===LAND && !walkable(p.x,p.y)){
     const sc = nearestSafeCell(p.x,p.y); p.x=sc.x; p.y=sc.y;
   }
-  // apply queued direction (reversing is allowed now — it retreats along your line)
-  if(p.queued){ p.dir = p.queued; p.queued = null; }
+  // apply queued direction
+  if(p.queued){
+    const q = p.queued;
+    // Qix: pressing the reverse of your DRAWING direction does NOT back up — it lights the fuse
+    const dd = p.drawDir;
+    if(MODE==='qix' && p.drawing && dd && (dd.x||dd.y) && q.x===-dd.x && q.y===-dd.y){
+      p.dir={x:0,y:0}; fuse.active=true;
+    } else { p.dir = q; }
+    p.queued = null;
+  }
   if(!p.dir.x && !p.dir.y) return;
   const speed = pus.speed>0 ? 22 : 15;       // cells / second
   p.stepAcc += dt*speed;
@@ -734,8 +754,8 @@ function movePlayer(dt){
     if(!inB(nx,ny)){ p.dir={x:0,y:0}; break; }
     const s = grid[idx(nx,ny)];
     if(s===TRAIL){
-      // back up along your own line (Qix-authentic): erase the head cell and step back
-      if(trail.length>=2 && idx(nx,ny)===trail[trail.length-2]){
+      // Xonix: back up along your line. (Qix reverse is intercepted above and never reaches here.)
+      if(MODE!=='qix' && trail.length>=2 && idx(nx,ny)===trail[trail.length-2]){
         const head = trail.pop(); grid[head]=EMPTY;
         p.x=nx; p.y=ny; fuse.idle=0; if(fuse.pos>trail.length) fuse.pos=trail.length;
         continue;
@@ -744,12 +764,14 @@ function movePlayer(dt){
     }
     // Qix mode: may ONLY travel the outer frame + edges of claimed land — never filled interior.
     if(s===LAND && MODE==='qix' && !p.drawing && !walkable(nx,ny)){ p.dir={x:0,y:0}; break; }
-    p.x=nx; p.y=ny;
+    // Don't auto-glide off an edge into the sea — starting a line needs a deliberate tap (armLine).
+    if(s===EMPTY && !p.drawing && !armLine){ p.dir={x:0,y:0}; break; }
+    p.x=nx; p.y=ny; armLine=false;
     if(s===EMPTY){
-      grid[idx(nx,ny)] = TRAIL; trail.push(idx(nx,ny)); p.drawing=true; p.onLand=false;
+      grid[idx(nx,ny)] = TRAIL; trail.push(idx(nx,ny)); p.drawing=true; p.onLand=false; p.drawDir={x:p.dir.x,y:p.dir.y};
       if(trail.length%4===0) SFX.small();
     } else { // LAND
-      if(p.drawing){ closeTrail(); if(state!=='playing') return; }
+      if(p.drawing){ closeTrail(); if(state!=='playing') return; p.dir={x:0,y:0}; break; }  // stop after completing a line
       p.onLand=true;
     }
     // pickup collect
@@ -1072,6 +1094,7 @@ async function loadBoardInto(elId, mineScore){
 // i.e. when you reverse/retreat or get stuck — not because you have to hold a button.
 function applyCmd(name){
   cmdDir = name || null;
+  armLine = true;   // a deliberate tap: allow this move to start a line if it steps into the sea
   const d = cmdDir ? DIRS[cmdDir] : null;
   if(MP.active){
     if(MP.over) return; const me = MP.players[MP.myIndex]; if(!me) return;
@@ -1123,6 +1146,7 @@ function togglePause(){
 const onTap=(id,fn)=>{ const el=document.getElementById(id); el.addEventListener('click',()=>{ resumeAudio(); fn(); }); };
 
 onTap('startBtn', ()=>newGame());
+onTap('continueBtn', ()=>continueGame());
 onTap('retryBtn', ()=>newGame());
 onTap('howBtn', ()=>show('screen-how'));
 onTap('howBack', ()=>show('screen-title'));
