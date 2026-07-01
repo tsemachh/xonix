@@ -146,6 +146,8 @@
     <div class="hudrow">
       <div id="status"><span id="combo"></span><span id="puwrap"></span></div>
       <div id="toolbar">
+        <button class="tbtn" id="pauseBtn" title="Pause">❚❚</button>
+        <button class="tbtn" id="tiltBtn" title="Tilt steering">⌖</button>
         <button class="tbtn" id="soundBtn" title="Sound">🔊</button>
         <button class="tbtn" id="quitBtn" title="Quit to menu">✕</button>
       </div>
@@ -201,9 +203,9 @@
         <span><span class="sw" style="background:#34d399"></span></span><span>Power-ups — grab them on your land.</span>
       </div>
       <div class="fact" style="border-color:var(--cyan)">
-        <b>Move:</b> swipe anywhere on the board, use the on-screen D-pad, or arrow keys / WASD.
-        You keep gliding in the last direction — steer into the water to start drawing,
-        and back onto land to seal it off. Capturing a region with no enemies fills it in.
+        <b>Move:</b> touch and hold anywhere on the board — a joystick appears; drag to steer, release to stop.
+        You can also enable <b>tilt</b> (⌖ button) or use arrow keys / WASD. Steer into the water to start drawing
+        a line, and back onto land to seal off territory. Capturing a region with no enemies fills it in.
       </div>
       <button class="ghost" id="howBack">Back</button>
     </div>
@@ -272,19 +274,6 @@
     </div>
   </div>
 
-  <div id="controls">
-    <div id="dpad">
-      <button class="dbtn" id="d-up">▲</button>
-      <button class="dbtn" id="d-left">◀</button>
-      <div id="dpad-center">move</div>
-      <button class="dbtn" id="d-right">▶</button>
-      <button class="dbtn" id="d-down">▼</button>
-    </div>
-    <div id="rightpad">
-      <button class="abtn" id="pauseBtn">❚❚ Pause</button>
-      <div id="hint">Swipe the board or use the D-pad. Steer into the water to draw.</div>
-    </div>
-  </div>
 </div>
 
 <!-- PeerJS (free public WebRTC broker, no API key) for online 2-player Territory Race.
@@ -455,7 +444,7 @@ function dmul(){ return DIFFMUL[DIFF] || 1; }
 let trail=[];
 let readyTimer=0, shake=0, levelStartTime=0;
 let fuse={active:false, pos:0, idle:0};   // Qix "fuse": a spark that burns down your line if you stop drawing
-let cmdDir=null, armLine=false;           // cmdDir = glide dir (only while drawing); armLine = a fresh tap may start a line
+let cmdDir=null, armLine=false, held=null;   // held = the currently-held move direction (hold-to-move / joystick / tilt)
 let qixMult=1, splitLevel=false;          // twin-Qix split multiplier (permanent, caps at 9) + is this a split level
 let clearAnim=0, revealRow=0, clearSplit=false, pendingClear=null;   // stage-clear celebration state
 let pus={shield:0, slow:0, freeze:0, speed:0};  // remaining seconds
@@ -525,7 +514,7 @@ function startLevel(){
   pus = {shield:0, slow:0, freeze:0, speed:0};
   combo = 1; comboTimer = 0;
   readyTimer = 1.2; shake = 0;
-  fuse = {active:false, pos:0, idle:0}; cmdDir = null;
+  fuse = {active:false, pos:0, idle:0}; cmdDir = null; held = null;
   levelStartTime = performance.now();
   updateHUD();
 }
@@ -689,7 +678,7 @@ function loseLife(reason){
   // respawn on the closest edge to where we crashed (Qix-authentic)
   const safe = nearestSafeCell(dx,dy);
   player.x=safe.x; player.y=safe.y; player.dir={x:0,y:0}; player.queued=null;
-  player.drawing=false; player.drawDir=null; player.onLand=true; player.stepAcc=0; cmdDir=null; armLine=false;
+  player.drawing=false; player.drawDir=null; player.onLand=true; player.stepAcc=0; cmdDir=null; armLine=false; held=null;
   pus.shield = 1.5; readyTimer = 1.0;
   updateHUD();
 }
@@ -777,7 +766,7 @@ function update(dt){
 
   if(readyTimer>0){ readyTimer-=dt; return; }
 
-  if(player.drawing && cmdDir) player.queued = DIRS[cmdDir];   // auto-glide ONLY while drawing a line
+  if(held) player.queued = DIRS[held];   // hold-to-move: keep applying the held direction
   const tlBefore = trail.length;
   movePlayer(dt);
   if(state!=='playing') return;
@@ -835,14 +824,12 @@ function movePlayer(dt){
     }
     // Qix mode: may ONLY travel the outer frame + edges of claimed land — never filled interior.
     if(s===LAND && MODE==='qix' && !p.drawing && !walkable(nx,ny)){ p.dir={x:0,y:0}; break; }
-    // Don't auto-glide off an edge into the sea — starting a line needs a deliberate tap (armLine).
-    if(s===EMPTY && !p.drawing && !armLine){ p.dir={x:0,y:0}; break; }
-    p.x=nx; p.y=ny; armLine=false;
+    p.x=nx; p.y=ny;
     if(s===EMPTY){
       grid[idx(nx,ny)] = TRAIL; trail.push(idx(nx,ny)); p.drawing=true; p.onLand=false; p.drawDir={x:p.dir.x,y:p.dir.y};
       if(trail.length%4===0) SFX.small();
     } else { // LAND
-      if(p.drawing){ closeTrail(); if(state!=='playing') return; p.dir={x:0,y:0}; break; }  // stop after completing a line
+      if(p.drawing){ closeTrail(); if(state!=='playing') return; }
       p.onLand=true;
     }
     // pickup collect
@@ -1110,6 +1097,7 @@ function draw(){
     ctx.fillText(boss&&readyTimer>0.6?'BOSS!':'GET READY', W/2, H/2);
   }
   ctx.restore();
+  drawJoystick();
 }
 function drawCreature(c, color, scale=1){
   ctx.save();
@@ -1151,6 +1139,15 @@ function drawPlayer(){
   ctx.restore(); ctx.shadowBlur=0;
   if(pus.shield>0){ ctx.strokeStyle='rgba(52,211,153,.9)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(cx,cy,CELL*1.3,0,7); ctx.stroke(); }
+}
+function drawJoystick(){
+  if(!joy.active || tilt.active) return;
+  ctx.save();
+  ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(joy.ax,joy.ay,CELL*3.2,0,7); ctx.stroke();
+  ctx.fillStyle='rgba(120,220,255,.45)'; ctx.strokeStyle='rgba(200,240,255,.7)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(joy.x,joy.y,CELL*1.5,0,7); ctx.fill(); ctx.stroke();
+  ctx.restore();
 }
 function puColor(t){ return {shield:'#34d399',slow:'#60a5fa',freeze:'#a5f3fc',speed:'#facc15',life:'#f472b6',bomb:'#fb923c'}[t]||'#fff'; }
 function puLetter(t){ return {shield:'S',slow:'~',freeze:'F',speed:'»',life:'+',bomb:'B'}[t]||'?'; }
@@ -1220,49 +1217,86 @@ async function loadBoardInto(elId, mineScore){
 //=================================================================================
 // INPUT
 //=================================================================================
-// ---------------- input: AUTO-ADVANCE (tap a direction once and keep gliding; no need to hold) ----------------
-// The Qix "fuse" stays meaningful because it builds whenever you're NOT extending your line —
-// i.e. when you reverse/retreat or get stuck — not because you have to hold a button.
-function applyCmd(name){
-  // You can only START a line from a standstill. While auto-gliding an edge, a tap toward the sea
-  // just stops you at the edge (tap again, now stopped, to actually draw).
-  const wasStopped = !!(player && !player.drawing && player.dir.x===0 && player.dir.y===0);
-  cmdDir = name || null;
-  armLine = wasStopped;
-  const d = cmdDir ? DIRS[cmdDir] : null;
+// ---------------- input: HOLD-TO-MOVE (move only while a direction is held — fluid, no accidental lines) ----------------
+// Reuses the Arcade Tag pattern: a floating joystick that anchors wherever you touch the board,
+// plus opt-in tilt steering. Both map to a 4-way grid direction; release = stop.
+const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+function setHeld(name){
+  held = name || null;
+  const d = held ? DIRS[held] : null;
   if(MP.active){
     if(MP.over) return; const me = MP.players[MP.myIndex]; if(!me) return;
-    if(d) me.queued={x:d.x,y:d.y};
+    if(d){ me.queued={x:d.x,y:d.y}; } else { me.dir={x:0,y:0}; me.queued=null; }
     if(MP.role==='guest') Net.send({t:'in', dx:d?d.x:0, dy:d?d.y:0});
     return;
   }
-  if(d && state==='playing' && player) player.queued={x:d.x,y:d.y};
+  if(state!=='playing' || !player) return;
+  if(d){ player.queued={x:d.x,y:d.y}; } else { player.dir={x:0,y:0}; player.queued=null; }
 }
-function pressDir(name){ applyCmd(name); }     // tap = set the auto-advance direction
-function releaseDir(){ /* auto-advance: releasing does NOT stop you */ }
-// keyboard
+// keyboard: hold to move (last pressed among held keys wins)
+const keyset={}, keyOrder=[];
+function activeKey(){ for(let i=keyOrder.length-1;i>=0;i--) if(keyset[keyOrder[i]]) return keyOrder[i]; return null; }
+function pressDir(name){ if(!keyset[name]){ keyset[name]=true; keyOrder.push(name); } setHeld(activeKey()); }
+function releaseDir(name){ keyset[name]=false; setHeld(activeKey()); }
 const KMAP={arrowup:'up',w:'up',arrowdown:'down',s:'down',arrowleft:'left',a:'left',arrowright:'right',d:'right'};
 addEventListener('keydown', e=>{ const k=e.key.toLowerCase();
   if(k==='p'){ togglePause(); return; }
-  const n=KMAP[k]; if(n){ resumeAudio(); applyCmd(n); e.preventDefault(); }
+  const n=KMAP[k]; if(n){ resumeAudio(); pressDir(n); e.preventDefault(); }
 });
-// on-screen d-pad: a tap sets the direction (keeps gliding)
+addEventListener('keyup', e=>{ const n=KMAP[e.key.toLowerCase()]; if(n){ releaseDir(n); e.preventDefault(); } });
+// legacy on-screen d-pad buttons (if present) also hold-to-move
 function bindHold(id,name){ const el=document.getElementById(id); if(!el) return;
-  const go=e=>{ e.preventDefault(); resumeAudio(); applyCmd(name); };
-  el.addEventListener('touchstart',go,{passive:false}); el.addEventListener('mousedown',go);
+  const dn=e=>{ e.preventDefault(); resumeAudio(); pressDir(name); };
+  const up=e=>{ e.preventDefault(); releaseDir(name); };
+  el.addEventListener('touchstart',dn,{passive:false}); el.addEventListener('touchend',up); el.addEventListener('touchcancel',up);
+  el.addEventListener('mousedown',dn); el.addEventListener('mouseup',up); el.addEventListener('mouseleave',up);
 }
 bindHold('d-up','up'); bindHold('d-down','down'); bindHold('d-left','left'); bindHold('d-right','right');
-// swipe / drag to steer — a flick sets the direction; you keep gliding after releasing
-let sx=0,sy=0,drag=false;
+
+// ---- floating virtual joystick: base anchors wherever you touch the board, drag to steer, release = stop ----
+const joy = { active:false, id:-1, ax:0, ay:0, x:0, y:0 };   // canvas coords
+function toCanvas(cx,cy){ const r=canvas.getBoundingClientRect(); return { x:(cx-r.left)/r.width*W, y:(cy-r.top)/r.height*H }; }
+function joyDir(){ const dx=joy.x-joy.ax, dy=joy.y-joy.ay, dead=CELL*0.8;
+  if(Math.abs(dx)<dead && Math.abs(dy)<dead) return null;
+  return Math.abs(dx)>Math.abs(dy) ? (dx>0?'right':'left') : (dy>0?'down':'up'); }
+function joyStart(cx,cy,id){ resumeAudio(); const p=toCanvas(cx,cy); joy.active=true; joy.id=id; joy.ax=p.x; joy.ay=p.y; joy.x=p.x; joy.y=p.y; }
+function joyMove(cx,cy){ if(!joy.active) return; const p=toCanvas(cx,cy); joy.x=p.x; joy.y=p.y;
+  const dx=joy.x-joy.ax, dy=joy.y-joy.ay, max=CELL*3.2, m=Math.hypot(dx,dy);
+  if(m>max){ joy.x=joy.ax+dx/m*max; joy.y=joy.ay+dy/m*max; }
+  if(!tilt.active) setHeld(joyDir()); }
+function joyEnd(){ joy.active=false; if(!tilt.active) setHeld(null); }
 const stage=document.getElementById('stage');
-function dragSteer(cx,cy){ const dx=cx-sx, dy=cy-sy; if(Math.abs(dx)<14 && Math.abs(dy)<14) return;
-  const n = Math.abs(dx)>Math.abs(dy) ? (dx>0?'right':'left') : (dy>0?'down':'up'); applyCmd(n); sx=cx; sy=cy; }
-stage.addEventListener('touchstart',e=>{ const t=e.touches[0]; sx=t.clientX; sy=t.clientY; drag=true; resumeAudio(); },{passive:true});
-stage.addEventListener('touchmove',e=>{ if(!drag)return; const t=e.touches[0]; dragSteer(t.clientX,t.clientY); },{passive:true});
-stage.addEventListener('touchend',()=>{ drag=false; });
-canvas.addEventListener('mousedown',e=>{ sx=e.clientX; sy=e.clientY; drag=true; resumeAudio(); });
-addEventListener('mousemove',e=>{ if(!drag)return; dragSteer(e.clientX,e.clientY); });
-addEventListener('mouseup',()=>{ drag=false; });
+stage.addEventListener('touchstart',e=>{ const t=e.changedTouches[0]; joyStart(t.clientX,t.clientY,t.identifier); },{passive:true});
+stage.addEventListener('touchmove',e=>{ for(const t of e.changedTouches) if(t.identifier===joy.id){ joyMove(t.clientX,t.clientY); break; } },{passive:true});
+stage.addEventListener('touchend',e=>{ for(const t of e.changedTouches) if(t.identifier===joy.id){ joyEnd(); break; } });
+stage.addEventListener('touchcancel',()=>joyEnd());
+canvas.addEventListener('mousedown',e=>{ joyStart(e.clientX,e.clientY,-2); });
+addEventListener('mousemove',e=>{ if(joy.active&&joy.id===-2) joyMove(e.clientX,e.clientY); });
+addEventListener('mouseup',()=>{ if(joy.id===-2) joyEnd(); });
+
+// ---- tilt steering (opt-in gyroscope; Arcade Tag pattern: calibrate baseline, dead-zone, smoothing) ----
+const tilt = { active:false, have:false, baseB:0, baseG:0, sx:0, sy:0 };
+const TILT_DEAD = 6;   // degrees before it registers
+function tiltSupported(){ return typeof window.DeviceOrientationEvent!=='undefined'; }
+function onTilt(e){
+  if(!tilt.active || state!=='playing') return;
+  if(!tilt.have){ tilt.baseB=e.beta||0; tilt.baseG=e.gamma||0; tilt.have=true; }
+  const dB=(e.beta||0)-tilt.baseB, dG=(e.gamma||0)-tilt.baseG;
+  tilt.sx += (dG-tilt.sx)*0.35; tilt.sy += (dB-tilt.sy)*0.35;   // light smoothing
+  let n=null;
+  if(Math.abs(tilt.sx)>Math.abs(tilt.sy)){ if(Math.abs(tilt.sx)>TILT_DEAD) n=tilt.sx>0?'right':'left'; }
+  else { if(Math.abs(tilt.sy)>TILT_DEAD) n=tilt.sy>0?'down':'up'; }
+  setHeld(n);
+}
+function toggleTilt(){
+  const btn=document.getElementById('tiltBtn');
+  if(tilt.active){ tilt.active=false; removeEventListener('deviceorientation',onTilt); setHeld(null); if(btn) btn.classList.remove('on'); showToast('Tilt off',900); return; }
+  if(!tiltSupported()){ showToast('Tilt not supported here',1200); return; }
+  const start=()=>{ tilt.active=true; tilt.have=false; tilt.sx=tilt.sy=0; addEventListener('deviceorientation',onTilt); if(btn) btn.classList.add('on'); showToast('Tilt on — hold level, then lean to steer',1700); };
+  const DO=window.DeviceOrientationEvent;
+  if(DO && typeof DO.requestPermission==='function'){ DO.requestPermission().then(s=>{ if(s==='granted') start(); else showToast('Tilt permission denied',1200); }).catch(()=>showToast('Tilt unavailable',1200)); }
+  else start();
+}
 // auto-pause when the tab/app loses focus, so the match isn't lost — resume from the Pause screen
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden && state==='playing' && !MP.active) togglePause(); });
 addEventListener('blur', ()=>{ if(state==='playing' && !MP.active) togglePause(); });
@@ -1309,6 +1343,7 @@ onTap('shareBtn', ()=>shareGame());
 onTap('lbBtn', ()=>{ show('screen-lb'); loadBoardInto('lbBody', null); });
 onTap('lbBack', ()=>show('screen-title'));
 onTap('pauseBtn', ()=>togglePause());
+onTap('tiltBtn', ()=>toggleTilt());
 onTap('resumeBtn', ()=>togglePause());
 onTap('restartBtn', ()=>newGame());
 onTap('pauseQuit', ()=>toMenu());
@@ -1507,7 +1542,7 @@ function mpUpdate(dt){
 
   MP.timer += dt;
   for(const p of MP.players){ if(p.shield>0) p.shield=Math.max(0,p.shield-dt); }
-  { const me=MP.players[MP.myIndex]; if(me && cmdDir) me.queued=DIRS[cmdDir]; }  // auto-advance
+  { const me=MP.players[MP.myIndex]; if(me && held) me.queued=DIRS[held]; }  // hold-to-move
   mpMove(MP.players[0], dt, [MP.players[1]]);
   if(!MP.over) mpMove(MP.players[1], dt, [MP.players[0]]);
   // enemies
@@ -1612,6 +1647,7 @@ function mpDraw(){
     ctx.fillText('P1 '+(mpPct(0)*100|0)+'%   ·   P2 '+(mpPct(1)*100|0)+'%', W/2, H/2+16);
     ctx.fillText('tap ✕ to exit', W/2, H/2+44); }
   ctx.restore();
+  drawJoystick();
 }
 function mpHUD(){
   const a=Math.round(mpPct(0)*100), b=Math.round(mpPct(1)*100);
@@ -1641,6 +1677,7 @@ function loop(now){
 refreshTitle(); buildTicker();
 // desktop (no touch) → hide the d-pad, keyboard plays; gives the board the full width
 try{ if(!('ontouchstart' in window) && !(navigator.maxTouchPoints>0)) document.documentElement.classList.add('notouch'); }catch(e){}
+try{ if(!isTouch || !tiltSupported()){ const tb=document.getElementById('tiltBtn'); if(tb) tb.style.display='none'; } }catch(e){}
 // scale the canvas up to fill most of the available stage (preserving aspect) — esp. on desktop
 function fitCanvas(){
   try{
