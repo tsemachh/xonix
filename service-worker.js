@@ -1,5 +1,7 @@
-/* Xonix - offline-first app-shell cache */
-const CACHE = 'xonix-v2';
+/* Xonix - service worker.
+ * Network-FIRST for the page/scripts so a new deploy is picked up immediately when online,
+ * with an offline cache fallback. Static icons stay cache-first. */
+const CACHE = 'xonix-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -15,21 +17,37 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;
-  // Never cache leaderboard API calls.
-  if (req.method !== 'GET' || /\/scores(\?|$)/.test(req.url)) return;
+  if (req.method !== 'GET' || /\/scores(\?|$)/.test(req.url)) return; // never cache leaderboard API
+
+  const accept = req.headers.get('accept') || '';
+  const isPage = req.mode === 'navigate' || accept.includes('text/html');
+
+  if (isPage) {
+    // network-first: always try to fetch the freshest page; fall back to cache when offline
+    e.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put('./index.html', copy)).catch(() => {});
+          return res;
+        })
+        .catch(() => caches.match(req).then((r) => r || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // everything else (icons, etc): cache-first, then network
   e.respondWith(
     caches.match(req).then((hit) =>
-      hit ||
-      fetch(req).then((res) => {
-        // Cache same-origin GETs as we go (app shell already pre-cached).
+      hit || fetch(req).then((res) => {
         try {
           const url = new URL(req.url);
           if (url.origin === self.location.origin) {
@@ -38,7 +56,7 @@ self.addEventListener('fetch', (e) => {
           }
         } catch (_) {}
         return res;
-      }).catch(() => caches.match('./index.html'))
+      }).catch(() => hit)
     )
   );
 });
