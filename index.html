@@ -27,16 +27,17 @@
   #hud{flex:0 0 auto;padding:8px 12px 4px;}
   .hudrow{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:14px;}
   #lives{letter-spacing:2px;color:var(--mag);font-size:16px;min-width:70px;}
-  #score{font-weight:bold;font-size:20px;color:var(--cyan);text-shadow:0 0 8px rgba(34,211,238,.5);
+  #score{font-weight:bold;font-size:14px;color:var(--muted);text-shadow:0 0 8px rgba(34,211,238,.4);
     font-variant-numeric:tabular-nums;}
   #lvl{color:var(--yellow);min-width:70px;text-align:right;}
-  #barwrap{position:relative;height:14px;margin-top:6px;border-radius:8px;background:#0a1330;
+  #barwrap{position:relative;height:28px;margin-top:6px;border-radius:9px;background:#0a1330;
     border:1px solid var(--line);overflow:hidden;}
   #bar{position:absolute;inset:0 100% 0 0;background:linear-gradient(90deg,var(--cyan),var(--green));
     transition:right .15s ease;}
-  #targetMark{position:absolute;top:-3px;width:2px;height:20px;background:var(--yellow);box-shadow:0 0 6px var(--yellow);}
-  #barlabel{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-    font-size:10px;font-weight:bold;color:#cfe;text-shadow:0 1px 2px #000;}
+  #targetMark{position:absolute;top:-2px;width:3px;height:32px;background:var(--yellow);box-shadow:0 0 6px var(--yellow);}
+  #barlabel{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:5px;
+    font-weight:800;color:#fff;text-shadow:0 1px 3px #000;}
+  #barlabel b{font-size:19px;} #barlabel span{font-size:12px;opacity:.8;font-weight:bold;}
   #status{display:flex;align-items:center;gap:8px;height:20px;margin-top:4px;font-size:12px;color:var(--muted);}
   #combo{color:var(--orange);font-weight:bold;}
   .pu{padding:1px 6px;border-radius:10px;font-size:11px;font-weight:bold;color:#04121f;}
@@ -880,7 +881,10 @@ function isFrontier(x,y){
 function walkable(x,y){
   if(!inB(x,y) || grid[idx(x,y)]!==LAND) return false;
   if(x===0 || y===0 || x===COLS-1 || y===ROWS-1) return true;   // outer perimeter — always
-  return isFrontier(x,y);
+  if(isFrontier(x,y)) return true;                              // an edge cell
+  // also allow ONE cell in from any edge, so convex corners are navigable (you can move up/around freely)
+  for(const [dx,dy] of [[-1,0],[1,0],[0,-1],[0,1]]) if(isFrontier(x+dx,y+dy)) return true;
+  return false;
 }
 // Nearest cell the player is allowed to stand on (an edge in Qix mode, any land in free-roam).
 // Used to drop the player back onto the closest edge after a crash.
@@ -1056,6 +1060,19 @@ function drawCreature(c, color, scale=1){
 }
 function drawPlayer(){
   const cx=(player.x+0.5)*CELL, cy=(player.y+0.5)*CELL;
+  // travel-direction hints (Qix mode, standing on an edge): little green arrows show which
+  // ways you can move ALONG an edge without drawing — so corners are never confusing.
+  if(MODE==='qix' && !player.drawing && state==='playing'){
+    ctx.fillStyle='rgba(120,255,180,.95)';
+    for(const [dx,dy] of [[0,-1],[0,1],[-1,0],[1,0]]){
+      if(!walkable(player.x+dx, player.y+dy)) continue;
+      const ax=cx+dx*CELL*1.15, ay=cy+dy*CELL*1.15, s=CELL*0.34;
+      ctx.beginPath();
+      if(dx){ ctx.moveTo(ax+dx*s,ay); ctx.lineTo(ax-dx*s*0.4,ay+s*0.7); ctx.lineTo(ax-dx*s*0.4,ay-s*0.7); }
+      else  { ctx.moveTo(ax,ay+dy*s); ctx.lineTo(ax+s*0.7,ay-dy*s*0.4); ctx.lineTo(ax-s*0.7,ay-dy*s*0.4); }
+      ctx.closePath(); ctx.fill();
+    }
+  }
   ctx.save(); ctx.translate(cx,cy); ctx.rotate(Math.PI/4);
   ctx.fillStyle = player.drawing? '#22d3ee' : '#eafcff';
   ctx.shadowColor='#22d3ee'; ctx.shadowBlur=12;
@@ -1081,14 +1098,14 @@ function updateHUD(){
   const tgt = Math.round(target*100);
   document.getElementById('bar').style.right = (100-pct)+'%';
   document.getElementById('targetMark').style.left = tgt+'%';
-  document.getElementById('barlabel').textContent = pct+'% / '+tgt+'%';
+  document.getElementById('barlabel').innerHTML = '<b>'+pct+'%</b><span>/ '+tgt+'%</span>';
   document.getElementById('combo').textContent = (qixMult>1?('SPLIT ×'+qixMult+'  '):'') + (combo>1 ? ('COMBO x'+combo) : (MODE==='qix'?'QIX · edges only':'FREE-ROAM'));
   // active powerups
   const pw=[]; if(pus.shield>0)pw.push(['🛡',pus.shield,'#34d399']);
   if(pus.slow>0)pw.push(['🐌',pus.slow,'#60a5fa']); if(pus.freeze>0)pw.push(['❄',pus.freeze,'#a5f3fc']);
   if(pus.speed>0)pw.push(['⚡',pus.speed,'#facc15']);
   document.getElementById('puwrap').innerHTML = pw.map(p=>`<span class="pu" style="background:${p[2]}">${p[0]}${Math.ceil(p[1])}</span>`).join(' ');
-  if(boss){ document.getElementById('barlabel').textContent = 'BOSS '+Math.round(boss.hp/boss.maxhp*100)+'% · '+pct+'%'; }
+  if(boss){ document.getElementById('barlabel').innerHTML = '<b>'+pct+'%</b><span>BOSS '+Math.round(boss.hp/boss.maxhp*100)+'%</span>'; }
 }
 
 const screens=['screen-title','screen-how','screen-facts','screen-lb','screen-lobby','screen-pause','screen-clear','screen-over'];
