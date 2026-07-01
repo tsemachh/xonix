@@ -202,12 +202,6 @@
       <button class="ghost" id="howBack">Back</button>
     </div>
 
-    <!-- FACTS -->
-    <div id="screen-facts" class="overlay hidden">
-      <h2 class="screen">DID YOU KNOW?</h2>
-      <div id="factsList" style="display:flex;flex-direction:column;gap:12px;max-width:420px;"></div>
-      <button class="ghost" id="factsBack">Back</button>
-    </div>
 
     <!-- LEADERBOARD -->
     <div id="screen-lb" class="overlay hidden">
@@ -1159,7 +1153,7 @@ function updateHUD(){
   if(boss){ document.getElementById('barlabel').innerHTML = '<b>'+pct+'%</b><span>BOSS '+Math.round(boss.hp/boss.maxhp*100)+'%</span>'; }
 }
 
-const screens=['screen-title','screen-how','screen-facts','screen-lb','screen-lobby','screen-pause','screen-clear','screen-over'];
+const screens=['screen-title','screen-how','screen-lb','screen-lobby','screen-pause','screen-clear','screen-over'];
 function hideAllScreens(){ screens.forEach(s=>document.getElementById(s).classList.add('hidden')); }
 function show(id){ hideAllScreens(); document.getElementById(id).classList.remove('hidden'); }
 
@@ -1281,9 +1275,7 @@ onTap('hostBtn', ()=>{ wireNetHandlers(); const code=Net.host();
   if(code){ document.getElementById('roomCode').textContent=code; document.getElementById('hostInfo').classList.remove('hidden'); } });
 onTap('joinBtn', ()=>{ wireNetHandlers(); Net.join(document.getElementById('joinCode').value); });
 onTap('lobbyBack', ()=>{ Net.close(); show('screen-title'); });
-onTap('factsBtn', ()=>{ renderFacts(); show('screen-facts'); });
 onTap('shareBtn', ()=>shareGame());
-onTap('factsBack', ()=>show('screen-title'));
 onTap('lbBtn', ()=>{ show('screen-lb'); loadBoardInto('lbBody', null); });
 onTap('lbBack', ()=>show('screen-title'));
 onTap('pauseBtn', ()=>togglePause());
@@ -1332,11 +1324,6 @@ function refreshTitle(){
   document.getElementById('soundBtn').textContent = muted?'🔇':'🔊';
   refreshMode();
 }
-function renderFacts(){
-  document.getElementById('factsList').innerHTML =
-    FACTS.map(f=>`<div class="fact">${f}</div>`).join('');
-}
-
 // scrolling "did you know" facts ticker on the title (continuous marquee, like River Raid)
 function buildTicker(){ const t=document.getElementById('tickerTrack'); if(!t) return;
   const line = '★ DID YOU KNOW — ' + FACTS.join('&nbsp;&nbsp;&nbsp;◆&nbsp;&nbsp;&nbsp;') + '&nbsp;&nbsp;&nbsp;◆&nbsp;&nbsp;&nbsp;';
