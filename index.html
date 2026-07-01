@@ -431,6 +431,7 @@ let MODE = LS.mode;   // 'qix' = move on borders/edges only, 'xonix' = free-roam
 let trail=[];
 let readyTimer=0, shake=0, levelStartTime=0;
 let fuse={active:false, pos:0, idle:0};   // Qix "fuse": a spark that burns down your line if you stop drawing
+let cmdDir=null;                          // persistent auto-advance direction (tap once, keep gliding)
 let pus={shield:0, slow:0, freeze:0, speed:0};  // remaining seconds
 let picColors = new Array(COLS*ROWS);
 
@@ -494,7 +495,7 @@ function startLevel(){
   pus = {shield:0, slow:0, freeze:0, speed:0};
   combo = 1; comboTimer = 0;
   readyTimer = 1.2; shake = 0;
-  fuse = {active:false, pos:0, idle:0};
+  fuse = {active:false, pos:0, idle:0}; cmdDir = null;
   levelStartTime = performance.now();
   updateHUD();
 }
@@ -595,7 +596,7 @@ function loseLife(reason){
   const dx=player.x, dy=player.y;
   for(const i of trail) grid[i]=EMPTY;
   trail = []; combo = 1;
-  fuse.active=false; fuse.pos=0; fuse.idle=0;
+  fuse.active=false; fuse.pos=0; fuse.idle=0; cmdDir=null;
   if(lives<=0){ return gameOver(); }
   // respawn on the closest edge to where we crashed (Qix-authentic)
   const safe = nearestSafeCell(dx,dy);
@@ -653,7 +654,7 @@ function update(dt){
 
   if(readyTimer>0){ readyTimer-=dt; return; }
 
-  const __an = activeName(); if(__an) player.queued = DIRS[__an];   // hold-to-move: keep applying held dir
+  if(cmdDir) player.queued = DIRS[cmdDir];   // auto-advance: keep gliding in the last commanded dir
   const tlBefore = trail.length;
   movePlayer(dt);
   if(state!=='playing') return;
@@ -1018,51 +1019,45 @@ async function loadBoardInto(elId, mineScore){
 //=================================================================================
 // INPUT
 //=================================================================================
-// ---------------- input: HOLD-TO-MOVE (you move only while a key/button/touch is held) ----------------
-// This is what makes the Qix "fuse" meaningful: let go mid-draw and you stop, and the spark catches you.
-const held = {up:false,down:false,left:false,right:false};
-let order = [];          // recency of held directions (last pressed wins)
-let swipeDir = null;     // transient direction from a touch/mouse drag
-function activeName(){ if(swipeDir) return swipeDir; for(let i=order.length-1;i>=0;i--) if(held[order[i]]) return order[i]; return null; }
-function commitInput(){
-  const name = activeName(), d = name ? DIRS[name] : null;
+// ---------------- input: AUTO-ADVANCE (tap a direction once and keep gliding; no need to hold) ----------------
+// The Qix "fuse" stays meaningful because it builds whenever you're NOT extending your line —
+// i.e. when you reverse/retreat or get stuck — not because you have to hold a button.
+function applyCmd(name){
+  cmdDir = name || null;
+  const d = cmdDir ? DIRS[cmdDir] : null;
   if(MP.active){
     if(MP.over) return; const me = MP.players[MP.myIndex]; if(!me) return;
-    if(d){ me.queued={x:d.x,y:d.y}; } else { me.dir={x:0,y:0}; me.queued=null; }
+    if(d) me.queued={x:d.x,y:d.y};
     if(MP.role==='guest') Net.send({t:'in', dx:d?d.x:0, dy:d?d.y:0});
     return;
   }
-  if(state!=='playing' || !player) return;
-  if(d){ player.queued={x:d.x,y:d.y}; } else { player.dir={x:0,y:0}; player.queued=null; }
+  if(d && state==='playing' && player) player.queued={x:d.x,y:d.y};
 }
-function pressDir(name){ if(!held[name]){ held[name]=true; order=order.filter(n=>n!==name); order.push(name); } commitInput(); }
-function releaseDir(name){ held[name]=false; order=order.filter(n=>n!==name); commitInput(); }
+function pressDir(name){ applyCmd(name); }     // tap = set the auto-advance direction
+function releaseDir(){ /* auto-advance: releasing does NOT stop you */ }
 // keyboard
 const KMAP={arrowup:'up',w:'up',arrowdown:'down',s:'down',arrowleft:'left',a:'left',arrowright:'right',d:'right'};
 addEventListener('keydown', e=>{ const k=e.key.toLowerCase();
   if(k==='p'){ togglePause(); return; }
-  const n=KMAP[k]; if(n){ resumeAudio(); pressDir(n); e.preventDefault(); }
+  const n=KMAP[k]; if(n){ resumeAudio(); applyCmd(n); e.preventDefault(); }
 });
-addEventListener('keyup', e=>{ const n=KMAP[e.key.toLowerCase()]; if(n){ releaseDir(n); e.preventDefault(); } });
-// on-screen d-pad: press-and-hold
+// on-screen d-pad: a tap sets the direction (keeps gliding)
 function bindHold(id,name){ const el=document.getElementById(id); if(!el) return;
-  const dn=e=>{ e.preventDefault(); resumeAudio(); pressDir(name); };
-  const up=e=>{ e.preventDefault(); releaseDir(name); };
-  el.addEventListener('touchstart',dn,{passive:false}); el.addEventListener('touchend',up); el.addEventListener('touchcancel',up);
-  el.addEventListener('mousedown',dn); el.addEventListener('mouseup',up); el.addEventListener('mouseleave',up);
+  const go=e=>{ e.preventDefault(); resumeAudio(); applyCmd(name); };
+  el.addEventListener('touchstart',go,{passive:false}); el.addEventListener('mousedown',go);
 }
 bindHold('d-up','up'); bindHold('d-down','down'); bindHold('d-left','left'); bindHold('d-right','right');
-// swipe / drag to steer (steer while dragging, stop on release)
+// swipe / drag to steer — a flick sets the direction; you keep gliding after releasing
 let sx=0,sy=0,drag=false;
 const stage=document.getElementById('stage');
-function dragMove(cx,cy){ const dx=cx-sx, dy=cy-sy; if(Math.abs(dx)<14 && Math.abs(dy)<14) return;
-  swipeDir = Math.abs(dx)>Math.abs(dy) ? (dx>0?'right':'left') : (dy>0?'down':'up'); commitInput(); sx=cx; sy=cy; }
+function dragSteer(cx,cy){ const dx=cx-sx, dy=cy-sy; if(Math.abs(dx)<14 && Math.abs(dy)<14) return;
+  const n = Math.abs(dx)>Math.abs(dy) ? (dx>0?'right':'left') : (dy>0?'down':'up'); applyCmd(n); sx=cx; sy=cy; }
 stage.addEventListener('touchstart',e=>{ const t=e.touches[0]; sx=t.clientX; sy=t.clientY; drag=true; resumeAudio(); },{passive:true});
-stage.addEventListener('touchmove',e=>{ if(!drag)return; const t=e.touches[0]; dragMove(t.clientX,t.clientY); },{passive:true});
-stage.addEventListener('touchend',()=>{ drag=false; swipeDir=null; commitInput(); });
+stage.addEventListener('touchmove',e=>{ if(!drag)return; const t=e.touches[0]; dragSteer(t.clientX,t.clientY); },{passive:true});
+stage.addEventListener('touchend',()=>{ drag=false; });
 canvas.addEventListener('mousedown',e=>{ sx=e.clientX; sy=e.clientY; drag=true; resumeAudio(); });
-addEventListener('mousemove',e=>{ if(!drag)return; dragMove(e.clientX,e.clientY); });
-addEventListener('mouseup',()=>{ if(drag){ drag=false; swipeDir=null; commitInput(); } });
+addEventListener('mousemove',e=>{ if(!drag)return; dragSteer(e.clientX,e.clientY); });
+addEventListener('mouseup',()=>{ drag=false; });
 // auto-pause when the tab/app loses focus, so the match isn't lost — resume from the Pause screen
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden && state==='playing' && !MP.active) togglePause(); });
 addEventListener('blur', ()=>{ if(state==='playing' && !MP.active) togglePause(); });
@@ -1290,7 +1285,7 @@ function mpUpdate(dt){
 
   MP.timer += dt;
   for(const p of MP.players){ if(p.shield>0) p.shield=Math.max(0,p.shield-dt); }
-  { const an=activeName(); const me=MP.players[MP.myIndex]; if(me && an) me.queued=DIRS[an]; }  // hold-to-move
+  { const me=MP.players[MP.myIndex]; if(me && cmdDir) me.queued=DIRS[cmdDir]; }  // auto-advance
   mpMove(MP.players[0], dt, [MP.players[1]]);
   if(!MP.over) mpMove(MP.players[1], dt, [MP.players[0]]);
   // enemies
