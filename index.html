@@ -188,6 +188,10 @@
         <a href="https://tsemachh.github.io/river-raid/" target="_blank" rel="noopener">River Raid</a> ·
         <a href="https://tsemachh.github.io/arcade-tag/" target="_blank" rel="noopener">Arcade Tag (תופסת)</a>
       </div>
+      <div id="iosHint" class="hidden" style="margin-top:8px;padding:8px 12px;border:1px solid var(--cyan);border-radius:10px;font-size:13px;color:var(--ink);background:rgba(34,211,238,.08);display:flex;align-items:center;gap:8px;max-width:90vw;">
+        <span>📲 Play as an app: tap <b>Share</b> <span style="font-size:15px">⬆︎</span> then <b>Add to Home Screen</b></span>
+        <button id="iosHintClose" style="background:none;border:none;color:var(--muted);font-size:16px;padding:2px 6px;cursor:pointer">✕</button>
+      </div>
       <div id="ticker"><div class="track" id="tickerTrack"></div></div>
     </div>
 
@@ -1882,6 +1886,18 @@ refreshTitle(); buildTicker();
 // desktop (no touch) → hide the d-pad, keyboard plays; gives the board the full width
 try{ if(!('ontouchstart' in window) && !(navigator.maxTouchPoints>0)) document.documentElement.classList.add('notouch'); }catch(e){}
 try{ if(!isTouch || !tiltSupported()){ const tb=document.getElementById('tiltBtn'); if(tb) tb.style.display='none'; } }catch(e){}
+// iOS never auto-prompts PWA install (no beforeinstallprompt) — show a one-time Add-to-Home-Screen hint
+try{
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+  const standalone = navigator.standalone===true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  if(isIOS && !standalone && !localStorage.getItem('xnx_ioshint')){
+    const hint=document.getElementById('iosHint');
+    if(hint){ hint.classList.remove('hidden');
+      const x=document.getElementById('iosHintClose');
+      if(x) x.addEventListener('click', ()=>{ hint.classList.add('hidden'); try{localStorage.setItem('xnx_ioshint','1');}catch(e){} });
+    }
+  }
+}catch(e){}
 // scale the canvas up to fill most of the available stage (preserving aspect) — esp. on desktop
 function fitCanvas(){
   try{
