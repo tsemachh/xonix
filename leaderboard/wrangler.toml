@@ -1,0 +1,8 @@
+name = "xonix-scores"
+main = "worker.js"
+compatibility_date = "2026-07-01"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "SCORES"
+id = "158ce0d6661d423b96abca7e3bf86fc0"
