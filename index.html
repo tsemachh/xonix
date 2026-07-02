@@ -206,7 +206,7 @@
       </div>
       <div class="fact" style="border-color:var(--cyan)">
         <b>Move:</b> touch and hold anywhere on the board — a joystick appears; drag to steer, release to stop.
-        You can also enable <b>tilt</b> (⌖ button) or use arrow keys / WASD. Steer into the water to start drawing
+        You can also enable <b>tilt</b> (⌖ button) or use arrow keys / WASD (<b>Space</b> = next level, <b>P</b> = pause). Steer into the water to start drawing
         a line, and back onto land to seal off territory. Capturing a region with no enemies fills it in.
       </div>
       <button class="ghost" id="howBack">Back</button>
@@ -1444,6 +1444,7 @@ function releaseDir(name){ keyset[name]=false; setHeld(activeKey()); }
 const KMAP={arrowup:'up',w:'up',arrowdown:'down',s:'down',arrowleft:'left',a:'left',arrowright:'right',d:'right'};
 addEventListener('keydown', e=>{ const k=e.key.toLowerCase();
   if(k==='p'){ togglePause(); return; }
+  if(k===' '&&state==='clear'){ e.preventDefault(); const b=document.getElementById('nextBtn'); if(b) b.click(); return; }   // Space = next level on the stats screen
   const n=KMAP[k]; if(n){ resumeAudio(); pressDir(n); e.preventDefault(); }
 });
 addEventListener('keyup', e=>{ const n=KMAP[e.key.toLowerCase()]; if(n){ releaseDir(n); e.preventDefault(); } });
