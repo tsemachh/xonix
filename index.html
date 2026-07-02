@@ -753,8 +753,11 @@ function loseLife(reason){
   trail = []; combo = 1;
   fuse.active=false; fuse.pos=0; fuse.idle=0; cmdDir=null;
   if(lives<=0){ return gameOver(); }
-  // respawn on the closest edge to where we crashed (Qix-authentic)
-  const safe = nearestSafeCell(dx,dy);
+  // died mid-line → return to where the line STARTED (Qix-authentic);
+  // otherwise respawn on the closest edge to where we crashed
+  const wasDrawing = player.drawing && player.lineStart;
+  const safe = wasDrawing ? nearestSafeCell(player.lineStart.x, player.lineStart.y)
+                          : nearestSafeCell(dx,dy);
   player.x=safe.x; player.y=safe.y; player.dir={x:0,y:0}; player.queued=null;
   player.drawing=false; player.drawDir=null; player.onLand=true; player.stepAcc=0; cmdDir=null; armLine=false; held=null;
   pus.shield = 1.5; readyTimer = 1.0;
@@ -964,6 +967,7 @@ function movePlayer(dt){
     // Sustained hold into green is redirected to a perimeter-follow above; reaching green here
     // without a deliberate fresh press (e.g. a 2nd corner mid-frame) → stop, never draw by accident.
     if(s===EMPTY && MODE==='qix' && !p.drawing && !p.drawArmed){ p.dir={x:0,y:0}; break; }
+    if(s===EMPTY && !p.drawing) p.lineStart = {x:p.x, y:p.y};   // remember where this line began (for crash respawn)
     p.x=nx; p.y=ny; p.travel={x:p.dir.x,y:p.dir.y};
     if(s===EMPTY){
       grid[idx(nx,ny)] = TRAIL; trail.push(idx(nx,ny)); p.drawing=true; p.onLand=false; p.drawDir={x:p.dir.x,y:p.dir.y}; p.drawArmed=false;
