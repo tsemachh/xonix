@@ -8,7 +8,7 @@ erratic **Qix** line-creature, and the occasional **boss**.
 Pure vanilla JavaScript + Canvas — **no build step, no dependencies, no frameworks**.
 Just open `index.html`.
 
-**▶ Play it live:** https://tsemachh.github.io/xonix/ *(after first deploy)*
+**▶ Play it live:** https://games.tsemach.dev/xonix/
 
 Installable as a Progressive Web App — on a phone, use your browser's *Add to Home
 Screen* and it runs full-screen and offline like a native app.

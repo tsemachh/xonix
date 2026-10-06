@@ -185,8 +185,8 @@
       <div class="small" id="bestLine"></div>
       <div class="small" id="moreGames" style="margin-top:4px;opacity:.85;">
         More games by Tsemach:
-        <a href="https://tsemachh.github.io/river-raid/" target="_blank" rel="noopener">River Raid</a> ·
-        <a href="https://tsemachh.github.io/arcade-tag/" target="_blank" rel="noopener">Arcade Tag (תופסת)</a>
+        <a href="https://games.tsemach.dev/river-raid/" target="_blank" rel="noopener">River Raid</a> ·
+        <a href="https://games.tsemach.dev/arcade-tag/" target="_blank" rel="noopener">Arcade Tag (תופסת)</a>
       </div>
       <div id="iosHint" class="hidden" style="margin-top:8px;padding:8px 12px;border:1px solid var(--cyan);border-radius:10px;font-size:13px;color:var(--ink);background:rgba(34,211,238,.08);display:flex;align-items:center;gap:8px;max-width:90vw;">
         <span>📲 Play as an app: tap <b>Share</b> <span style="font-size:15px">⬆︎</span> then <b>Add to Home Screen</b></span>
@@ -1574,7 +1574,7 @@ document.getElementById('soundBtn').addEventListener('click', ()=>{
 });
 
 function shareGame(){
-  const url = 'https://tsemachh.github.io/xonix/';
+  const url = 'https://games.tsemach.dev/xonix/';
   const data = { title:'Xonix', text:'Play Xonix — a mobile Qix/Xonix territory-capture arcade game 🎮', url };
   try{
     if(navigator.share){ navigator.share(data).catch(()=>{}); return; }
