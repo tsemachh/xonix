@@ -295,7 +295,7 @@
 //=================================================================================
 
 // ---- Leaderboard backend (paste your Cloudflare Worker URL here; empty = local only)
-const LB_URL = "https://xonix-scores.tsemachh.workers.dev";
+const LB_URL = "https://arcade-scores.tsemachh-391.workers.dev";
 
 // ---- Grid ---- (landscape board on wide/desktop screens for more room; portrait on phones)
 const LANDSCAPE = (typeof window!=='undefined') && (window.innerWidth||0) > (window.innerHeight||0)*1.15;
@@ -1395,11 +1395,11 @@ function showToast(msg, ms){ const el=document.getElementById('toast'); el.textC
 // LEADERBOARD client
 //=================================================================================
 async function fetchBoard(){
-  if(LB_URL){ try{ const r=await fetch(LB_URL.replace(/\/$/,'')+'/scores'); const j=await r.json(); return j.scores||[]; }catch(e){} }
+  if(LB_URL){ try{ const r=await fetch(LB_URL.replace(/\/$/,'')+'/scores?game=xonix'); const j=await r.json(); return j.scores||[]; }catch(e){} }
   return LS.localBoard();
 }
 async function submitScore(name, sc, lv){
-  if(LB_URL){ try{ const r=await fetch(LB_URL.replace(/\/$/,'')+'/scores',{method:'POST',
+  if(LB_URL){ try{ const r=await fetch(LB_URL.replace(/\/$/,'')+'/scores?game=xonix',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({name,score:sc,level:lv})});
     const j=await r.json(); return j.scores||[]; }catch(e){} }
   const b=LS.localBoard(); b.push({name:name||'YOU',score:sc,level:lv,ts:Date.now()});
